@@ -494,8 +494,20 @@ static inline float ggml_e8m0_to_fp32_half(uint8_t x) {
     return result;
 }
 
+static inline uint8_t ggml_fp32_to_e8m0(float x) {
+    uint32_t bits;
+
+    memcpy(&bits, &x, sizeof(float));
+
+    // round half-way away from zero
+    bits += (bits & 0x00400000) << 1;
+
+    return (uint8_t) (bits >> 23);
+}
+
 #define GGML_E8M0_TO_FP32(x) ggml_e8m0_to_fp32(x)
 #define GGML_E8M0_TO_FP32_HALF(x) ggml_e8m0_to_fp32_half(x)
+#define GGML_FP32_TO_E8M0(x) ggml_fp32_to_e8m0(x)
 
 // UE4M3: unsigned, 4 exp bits (bias=7), 3 mantissa bits
 // Returns value * 0.5 to match kvalues_mxfp4 convention (kvalues = 2 * E2M1_float)

@@ -671,8 +671,10 @@ class MXFP4(__Quant, qtype=GGMLQuantizationType.MXFP4):
 
         d = abs(blocks).max(axis=-1, keepdims=True)
 
-        with np.errstate(divide="ignore"):
-            e = np.where(d > 0, np.floor(np.log2(d)) - 2 + 127, 0).astype(np.uint8)
+        scale = (d / np.float32(4)).view(np.uint32)
+        # round away from zero
+        scale += (scale & np.uint32(0x00400000)) << 1
+        e = ((scale >> 23) & np.uint32(0xFF)).astype(np.uint8)
 
         d = cls.e8m0_to_fp32_half(e)
 
