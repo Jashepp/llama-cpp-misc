@@ -1142,9 +1142,9 @@ void ggml_cuda_mul_mat_vec_q(
 
     GGML_ASSERT(!ids || ne12 <= MMVQ_MAX_BATCH_SIZE);
 
-    const float   * src1_d =       (const float   *) src1->data;
-    const int32_t *  ids_d = ids ? (const int32_t *)  ids->data : nullptr;
-    float         *  dst_d =       (float         *)  dst->data;
+    const float   * src1_d =       (const float   *) GGML_CUDA_NAME_TENSOR(src1->data, src1);
+    const int32_t *  ids_d = ids ? (const int32_t *) GGML_CUDA_NAME_TENSOR(ids->data, ids) : nullptr;
+    float         *  dst_d =       (float         *) GGML_CUDA_NAME_TENSOR(dst->data, dst);
 
     ggml_cuda_mm_fusion_args_device fusion_local{};
 
@@ -1156,17 +1156,17 @@ void ggml_cuda_mul_mat_vec_q(
             GGML_ASSERT(fusion->x_bias->type == GGML_TYPE_F32);
             GGML_ASSERT(fusion->x_bias->ne[0] == dst->ne[0]);
             GGML_ASSERT(!ids || fusion->x_bias->ne[1] == src0->ne[2]);
-            fusion_local.x_bias = fusion->x_bias->data;
+            fusion_local.x_bias = GGML_CUDA_NAME_TENSOR(fusion->x_bias->data, fusion->x_bias);
         }
         if (fusion->gate) {
             GGML_ASSERT(fusion->gate->type == src0->type && ggml_are_same_stride(fusion->gate, src0));
-            fusion_local.gate = fusion->gate->data;
+            fusion_local.gate = GGML_CUDA_NAME_TENSOR(fusion->gate->data, fusion->gate);
         }
         if (fusion->gate_bias) {
             GGML_ASSERT(fusion->gate_bias->type == GGML_TYPE_F32);
             GGML_ASSERT(fusion->gate_bias->ne[0] == dst->ne[0]);
             GGML_ASSERT(!ids || fusion->gate_bias->ne[1] == src0->ne[2]);
-            fusion_local.gate_bias = fusion->gate_bias->data;
+            fusion_local.gate_bias = GGML_CUDA_NAME_TENSOR(fusion->gate_bias->data, fusion->gate_bias);
         }
         fusion_local.glu_op = fusion->glu_op;
     }
@@ -1178,7 +1178,8 @@ void ggml_cuda_mul_mat_vec_q(
         if (size_alloc > size_data) {
             GGML_ASSERT(ggml_is_contiguously_allocated(src0));
             GGML_ASSERT(!src0->view_src);
-            CUDA_CHECK(cudaMemsetAsync((char *) src0->data + size_data, 0, size_alloc - size_data, stream));
+            const void * src0_data = GGML_CUDA_NAME_TENSOR(src0->data, src0);
+            CUDA_CHECK(cudaMemsetAsync((char *) src0_data + size_data, 0, size_alloc - size_data, stream));
         }
     }
 
@@ -1214,7 +1215,7 @@ void ggml_cuda_mul_mat_vec_q(
     const int64_t ids_stride = ids ? ids->nb[1] / ggml_type_size(ids->type) : 0;
 
     mul_mat_vec_q_switch_type(
-        src0->data, src0->type, src1_q8_1.get(), ids_d, fusion_local, dst_d, ne00,
+        GGML_CUDA_NAME_TENSOR(src0->data, src0), src0->type, src1_q8_1.get(), ids_d, fusion_local, dst_d, ne00,
         ne01,              ncols_dst,     s01, stride_col_y,     stride_col_dst,
         ne02, nchannels_y, nchannels_dst, s02, stride_channel_y, stride_channel_dst,
         ne03,              ne3,           s03, s13,              s3,               ids_stride, stream);

@@ -94,9 +94,9 @@ void ggml_cuda_mul_mat_q(
     GGML_ASSERT(        nb0        == ts_dst);
     GGML_ASSERT(!ids || ids->nb[0] == ggml_type_size(ids->type));
 
-    const char  * src0_d = (const char  *) src0->data;
-    const float * src1_d = (const float *) src1->data;
-    float       *  dst_d = (float       *)  dst->data;
+    const char  * src0_d = (const char  *)GGML_CUDA_NAME_TENSOR(src0->data, src0);
+    const float * src1_d = (const float *)GGML_CUDA_NAME_TENSOR(src1->data, src1);
+    float       *  dst_d = (float       *)GGML_CUDA_NAME_TENSOR(dst->data, dst);
 
     // If src0 is a temporary compute buffer, clear any potential padding.
     if (ggml_backend_buffer_get_usage(src0->buffer) == GGML_BACKEND_BUFFER_USAGE_COMPUTE) {
@@ -105,7 +105,7 @@ void ggml_cuda_mul_mat_q(
         if (size_alloc > size_data) {
             GGML_ASSERT(ggml_is_contiguously_allocated(src0));
             GGML_ASSERT(!src0->view_src);
-            CUDA_CHECK(cudaMemsetAsync((char *) src0->data + size_data, 0, size_alloc - size_data, stream));
+            CUDA_CHECK(cudaMemsetAsync((char *)GGML_CUDA_NAME_TENSOR(src0->data, src0) + size_data, 0, size_alloc - size_data, stream));
         }
     }
 
@@ -178,7 +178,7 @@ void ggml_cuda_mul_mat_q(
         const int si1  = ids->nb[1] / ggml_element_size(ids);
         const int sis1 = nb12 / nb11;
 
-        ggml_cuda_launch_mm_ids_helper((const int32_t *) ids->data, ids_src1.get(), ids_dst.get(), expert_bounds.get(),
+        ggml_cuda_launch_mm_ids_helper((const int32_t *)GGML_CUDA_NAME_TENSOR(ids->data, ids), ids_src1.get(), ids_dst.get(), expert_bounds.get(),
             ne02, ne12, n_expert_used, ne11, si1, sis1, stream);
         CUDA_CHECK(cudaGetLastError());
     }

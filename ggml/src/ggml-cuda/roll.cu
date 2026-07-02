@@ -49,8 +49,8 @@ void ggml_cuda_op_roll(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     int s3 = dst->op_params[3];
 
     const ggml_tensor * src0   = dst->src[0];
-    const float *       src0_d = (const float *) dst->src[0]->data;
-    float *             dst_d  = (float *) dst->data;
+    const float *       src0_d = (const float *) GGML_CUDA_NAME_TENSOR(dst->src[0]->data, dst->src[0]);
+    float *             dst_d  = (float *)GGML_CUDA_NAME_TENSOR(dst->data, dst);
 
     GGML_TENSOR_UNARY_OP_LOCALS;
 

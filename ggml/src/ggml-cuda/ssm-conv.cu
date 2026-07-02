@@ -182,10 +182,10 @@ void ggml_cuda_op_ssm_conv(ggml_backend_cuda_context & ctx, ggml_tensor * dst, g
     GGML_ASSERT(src1->nb[0] == sizeof(float));
     GGML_ASSERT(src0->nb[1] == src0->ne[0] * sizeof(float));
 
-    const float * src0_d = (const float *) src0->data;
-    const float * src1_d = (const float *) src1->data;
-    const float * bias_d = fuse_bias ? (const float *) bias->data : nullptr;
-    float *       dst_d  = (float *) out->data;
+    const float * src0_d = (const float *)GGML_CUDA_NAME_TENSOR(src0->data, src0);
+    const float * src1_d = (const float *)GGML_CUDA_NAME_TENSOR(src1->data, src1);
+    const float * bias_d = fuse_bias ? (const float *)GGML_CUDA_NAME_TENSOR(bias->data, bias) : nullptr;
+    float *       dst_d  = (float *)GGML_CUDA_NAME_TENSOR(out->data, out);
     cudaStream_t  stream = ctx.stream();
 
     GGML_ASSERT(src0->type == GGML_TYPE_F32);

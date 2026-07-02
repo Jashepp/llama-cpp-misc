@@ -134,7 +134,8 @@ std::unique_ptr<llm_graph_context> llama_model_qwen35::build_arch_graph(const ll
 }
 
 llama_model_qwen35::graph::graph(const llama_model & model, const llm_graph_params & params) :
-    llm_build_delta_net_base(params), model(model) {
+    llm_build_delta_net_base(model, params), model(model) {
+    set_model(&model);
     const int64_t n_embd_head = hparams.n_embd_head_v();
 
     GGML_ASSERT(n_embd_head == hparams.n_embd_head_k());
@@ -486,7 +487,7 @@ ggml_tensor * llama_model_qwen35::graph::build_layer_ffn(ggml_tensor * cur, cons
 
 // LLM_GRAPH_TYPE_DECODER_MTP draft head for Qwen3.5/3.6 dense series
 llama_model_qwen35::graph_mtp::graph_mtp(const llama_model & model, const llm_graph_params & params)
-    : llm_graph_context(params) {
+    : llm_graph_context(params) { set_model(&model); 
     GGML_ASSERT(hparams.n_layer_nextn > 0 && "QWEN35 MTP requires n_layer_nextn > 0");
     GGML_ASSERT(hparams.n_layer_nextn == 1 && "QWEN35 MTP currently only supports a single MTP block");
 

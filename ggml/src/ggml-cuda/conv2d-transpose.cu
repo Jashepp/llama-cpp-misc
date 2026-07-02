@@ -75,9 +75,9 @@ void ggml_cuda_conv_2d_transpose_p0(ggml_backend_cuda_context & ctx, ggml_tensor
     GGML_ASSERT(kernel->type == GGML_TYPE_F16 || kernel->type == GGML_TYPE_F32);
     GGML_ASSERT(input->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32);
 
-    const float * input_data  = (const float *) input->data;
-    float *       output_data = (float *) dst->data;
-    const void *  kernel_data = kernel->data;
+    const float * input_data  = (const float *)GGML_CUDA_NAME_TENSOR(input->data, input);
+    float *       output_data = (float *)GGML_CUDA_NAME_TENSOR(dst->data, dst);
+    const void *  kernel_data = GGML_CUDA_NAME_TENSOR(kernel->data, kernel);
 
     const int input_w      = input->ne[0];
     const int input_h      = input->ne[1];

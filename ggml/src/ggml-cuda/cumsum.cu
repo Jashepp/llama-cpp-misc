@@ -273,7 +273,7 @@ void ggml_cuda_op_cumsum(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
         case GGML_TYPE_F32:
             {
                 cumsum_cuda(
-                    ctx, (const float *)src0->data, (float *)dst->data,
+                    ctx, (const float *)GGML_CUDA_NAME_TENSOR(src0->data, src0), (float *)GGML_CUDA_NAME_TENSOR(dst->data, dst),
                     src0->ne[0], src0->ne[1], src0->ne[2], src0->ne[3],
                     src0->nb[0], src0->nb[1], src0->nb[2], src0->nb[3],
                     dst->nb[0], dst->nb[1], dst->nb[2], dst->nb[3],
@@ -284,7 +284,7 @@ void ggml_cuda_op_cumsum(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
         /*case GGML_TYPE_F16:
             {
                 cumsum_cuda(
-                    (const half *)src0->data, (half *)dst->data,
+                    (const half *)GGML_CUDA_NAME_TENSOR(src0->data, src0), (half *)GGML_CUDA_NAME_TENSOR(dst->data, dst),
                     src0->ne[0], src0->ne[1], src0->ne[2], src0->ne[3],
                     src0->nb[0], src0->nb[1], src0->nb[2], src0->nb[3],
                     dst->nb[0], dst->nb[1], dst->nb[2], dst->nb[3],
@@ -294,7 +294,7 @@ void ggml_cuda_op_cumsum(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
         case GGML_TYPE_BF16:
             {
                 cumsum_cuda(
-                    (const nv_bfloat16 *)src0->data, (nv_bfloat16 *)dst->data,
+                    (const nv_bfloat16 *)GGML_CUDA_NAME_TENSOR(src0->data, src0), (nv_bfloat16 *)GGML_CUDA_NAME_TENSOR(dst->data, dst),
                     src0->ne[0], src0->ne[1], src0->ne[2], src0->ne[3],
                     src0->nb[0], src0->nb[1], src0->nb[2], src0->nb[3],
                     dst->nb[0], dst->nb[1], dst->nb[2], dst->nb[3],

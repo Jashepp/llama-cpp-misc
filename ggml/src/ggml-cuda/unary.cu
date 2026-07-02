@@ -137,8 +137,8 @@ static void unary_cuda(const T * x, T * dst, const int k, cudaStream_t stream) {
 template <float (*op)(float)>
 void ggml_cuda_op_unary(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * src0 = dst->src[0];
-    const void * src0_d = src0->data;
-    void * dst_d = dst->data;
+    const void * src0_d = GGML_CUDA_NAME_TENSOR(src0->data, src0);
+    void * dst_d = GGML_CUDA_NAME_TENSOR(dst->data, dst);
     cudaStream_t stream = ctx.stream();
 
     GGML_ASSERT(ggml_is_contiguous(src0));
@@ -287,11 +287,11 @@ template <float (*op)(float)>
 void ggml_cuda_op_unary_gated(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * src0 = dst->src[0];
     const ggml_tensor * src1 = dst->src[1];
-    void * src0_d = src0->data;
-    void * src1_d = src1 ? src1->data : src0->data;
+    void * src0_d = GGML_CUDA_NAME_TENSOR(src0->data, src0);
+    void * src1_d = src1 ? GGML_CUDA_NAME_TENSOR(src1->data, src1) : GGML_CUDA_NAME_TENSOR(src0->data, src0);
     const int64_t src0_o = src0->nb[1];
     const int64_t src1_o = src1 ? src1->nb[1] : src0->nb[1];
-    void * dst_d = dst->data;
+    void * dst_d = GGML_CUDA_NAME_TENSOR(dst->data, dst);
     const int64_t nc = src1 ? src0->ne[0] : src0->ne[0] / 2;
     cudaStream_t stream = ctx.stream();
 
@@ -386,11 +386,11 @@ static void swiglu_oai_cuda(const T * x, const T * g, T * dst, const int64_t k, 
 void ggml_cuda_op_swiglu_oai(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * src0 = dst->src[0];
     const ggml_tensor * src1 = dst->src[1];
-    void * src0_d = src0->data;
-    void * src1_d = src1 ? src1->data : src0->data;
+    void * src0_d = GGML_CUDA_NAME_TENSOR(src0->data, src0);
+    void * src1_d = src1 ? GGML_CUDA_NAME_TENSOR(src1->data, src1) : GGML_CUDA_NAME_TENSOR(src0->data, src0);
     const int64_t src0_o = src0->nb[1];
     const int64_t src1_o = src1 ? src1->nb[1] : src0->nb[1];
-    void * dst_d = dst->data;
+    void * dst_d = GGML_CUDA_NAME_TENSOR(dst->data, dst);
     const int64_t nc = src1 ? src0->ne[0] : src0->ne[0] / 2;
     cudaStream_t stream = ctx.stream();
 
@@ -456,8 +456,8 @@ static void xielu_cuda(const T * x, T * dst, const int k, float alpha_n, float a
 
 void ggml_cuda_op_xielu(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * src0 = dst->src[0];
-    const void * src0_d = src0->data;
-    void * dst_d = dst->data;
+    const void * src0_d = GGML_CUDA_NAME_TENSOR(src0->data, src0);
+    void * dst_d = GGML_CUDA_NAME_TENSOR(dst->data, dst);
     cudaStream_t stream = ctx.stream();
 
     GGML_ASSERT(ggml_is_contiguous(src0));
@@ -508,9 +508,9 @@ void ggml_cuda_op_silu_back(ggml_backend_cuda_context & ctx, ggml_tensor * dst) 
     const ggml_tensor * src0 = dst->src[0]; // input from forward pass
     const ggml_tensor * src1 = dst->src[1]; // grads of forward pass output
 
-    const float * src0_d = (const float *) src0->data;
-    const float * src1_d = (const float *) src1->data;
-    float       * dst_d  = (float       *) dst->data;
+    const float * src0_d = (const float *) GGML_CUDA_NAME_TENSOR(src0->data, src0);
+    const float * src1_d = (const float *) GGML_CUDA_NAME_TENSOR(src1->data, src1);
+    float       * dst_d  = (float       *) GGML_CUDA_NAME_TENSOR(dst->data, dst);
 
     cudaStream_t stream = ctx.stream();
 
@@ -552,8 +552,8 @@ static void leaky_relu_cuda(const T * x, T * dst, const int k, const float negat
 
 void ggml_cuda_op_leaky_relu(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * src0 = dst->src[0];
-    const void * src0_d = src0->data;
-    void * dst_d = dst->data;
+    const void * src0_d = GGML_CUDA_NAME_TENSOR(src0->data, src0);
+    void * dst_d = GGML_CUDA_NAME_TENSOR(dst->data, dst);
     cudaStream_t stream = ctx.stream();
 
     GGML_ASSERT(ggml_is_contiguous(src0));
@@ -601,12 +601,12 @@ static void ggml_cuda_op_unary_mul_impl(ggml_backend_cuda_context & ctx, ggml_te
     const int64_t other_stride = other_src->nb[1];
 
     if (unary_src->type == GGML_TYPE_F16) {
-        unary_gated_cuda<op>((const half *) unary_src->data, (const half *) other_src->data,
-                             (half *) mul_node->data, k, nc,
+        unary_gated_cuda<op>((const half *) GGML_CUDA_NAME_TENSOR(unary_src->data, unary_src), (const half *) GGML_CUDA_NAME_TENSOR(other_src->data, other_src),
+                             (half *) GGML_CUDA_NAME_TENSOR(mul_node->data, mul_node), k, nc,
                              unary_stride / sizeof(half), other_stride / sizeof(half), stream);
     } else {
-        unary_gated_cuda<op>((const float *) unary_src->data, (const float *) other_src->data,
-                             (float *) mul_node->data, k, nc,
+        unary_gated_cuda<op>((const float *) GGML_CUDA_NAME_TENSOR(unary_src->data, unary_src), (const float *) GGML_CUDA_NAME_TENSOR(other_src->data, other_src),
+                             (float *) GGML_CUDA_NAME_TENSOR(mul_node->data, mul_node), k, nc,
                              unary_stride / sizeof(float), other_stride / sizeof(float), stream);
     }
 }
@@ -639,8 +639,8 @@ void ggml_cuda_op_relu_sqr(ggml_backend_cuda_context & ctx, ggml_tensor * relu_n
 
     const int k = ggml_nelements(src);
     if (src->type == GGML_TYPE_F16) {
-        unary_cuda<op_relu_sqr>((const half *)src->data, (half *)sqr_node->data, k, stream);
+        unary_cuda<op_relu_sqr>((const half *)GGML_CUDA_NAME_TENSOR(src->data, src), (half *)GGML_CUDA_NAME_TENSOR(sqr_node->data, sqr_node), k, stream);
     } else {
-        unary_cuda<op_relu_sqr>((const float *)src->data, (float *)sqr_node->data, k, stream);
+        unary_cuda<op_relu_sqr>((const float *)GGML_CUDA_NAME_TENSOR(src->data, src), (float *)GGML_CUDA_NAME_TENSOR(sqr_node->data, sqr_node), k, stream);
     }
 }

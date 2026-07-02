@@ -1541,6 +1541,14 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_env("LLAMA_ARG_PERF"));
     add_opt(common_arg(
+        {"--tensor-access-stats"},
+        {"--no-tensor-access-stats"},
+        string_format("whether to enable tensor access counting (default: %s)", params.sampling.tensor_access_stats ? "true" : "false"),
+        [](common_params & params, bool value) {
+            params.sampling.tensor_access_stats = value;
+        }
+    ).set_env("LLAMA_ARG_TENSOR_ACCESS_STATS"));
+    add_opt(common_arg(
         {"--show-timings"},
         {"--no-show-timings"},
         string_format("whether to show timing information after each response (default: %s)", params.show_timings ? "true" : "false"),

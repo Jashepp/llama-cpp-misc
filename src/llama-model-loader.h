@@ -119,6 +119,12 @@ struct llama_model_loader {
     ggml_backend_buffer_type_t first_moved_from_buft = nullptr;
     ggml_backend_buffer_type_t first_moved_to_buft = nullptr;
 
+    // Tensor access counting: tensor name -> gguf tensor index mapping
+    std::map<std::string, int32_t> tensor_id_map;
+
+    // Tensor access counting: data pointer -> gguf tensor index mapping (for CUDA tensor name resolution)
+    std::unordered_map<void *, int32_t> data_addr_to_gguf_tensor_map;
+
     llama_model_loader(
         struct gguf_context * metadata,
         llama_model_set_tensor_data_t set_tensor_data,

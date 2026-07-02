@@ -67,6 +67,8 @@
 #include "ggml-cuda/fill.cuh"
 #include "ggml.h"
 
+#include "../../src/llama-impl.h"
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -601,6 +603,212 @@ static std::mutex ggml_cuda_lock;
 static std::condition_variable ggml_cuda_lock_cv;
 static std::atomic<int> ggml_cuda_lock_counter;
 
+// ============================================================================
+// CUDA Tensor Allocation Tracking (for tensor access counting)
+// ============================================================================
+// This map tracks CUDA buffer base addresses to GGUF tensor indices.
+// When a CUDA tensor is allocated with a name matching the pattern
+// "CUDA0#{gguf_tensor_name}#N", we strip the prefix/suffix and look up
+// the GGUF tensor index. We then register the buffer base address so that
+// intermediate CUDA tensors (views, aliases) can be resolved by their
+// data address during inference.
+//
+// This enables tensor access counting for dynamically created intermediate
+// CUDA tensors that don't have GGUF tensor IDs but are derived from GGUF
+// weight tensors.
+//
+// Key: CUDA device pointer (buffer base address or tensor data address)
+// Value: GGUF tensor index (int32_t)
+// ============================================================================
+
+static std::mutex ggml_cuda_tensor_map_lock;
+static std::unordered_map<void *, int32_t> ggml_cuda_tensor_map;
+
+// Map from CUDA tensor name to GGUF tensor index (for name-based resolution)
+static std::unordered_map<std::string, int32_t> ggml_cuda_tensor_name_map;
+
+static std::string ggml_cuda_parse_tensor_name(const char * cuda_tensor_name);
+
+void ggml_cuda_register_tensor(void * data_addr, const char * tensor_name) {
+    if (!data_addr || !tensor_name) {
+        return;
+    }
+
+    // Extract GGUF tensor name from CUDA tensor name pattern:
+    // "CUDA0#{gguf_tensor_name}#N" -> strip "CUDA0#" prefix and "#N" suffix
+    std::string gguf_name = ggml_cuda_parse_tensor_name(tensor_name);
+
+    // Store the mapping with the extracted GGUF name for name-based resolution
+    {
+        std::lock_guard<std::mutex> lock(ggml_cuda_tensor_map_lock);
+        ggml_cuda_tensor_map[data_addr] = -1;
+        if (!gguf_name.empty()) {
+            ggml_cuda_tensor_name_map[gguf_name] = -1;
+        }
+    }
+}
+
+const char * ggml_cuda_resolve_tensor_name(void * data_addr) {
+    if (!data_addr) {
+        return nullptr;
+    }
+
+    // This function is not fully implemented yet.
+    // The callback system will use ggml_cuda_register_tensor to populate the map.
+    return nullptr;
+}
+
+void ggml_cuda_clear_tensor_map() {
+    std::lock_guard<std::mutex> lock(ggml_cuda_tensor_map_lock);
+    ggml_cuda_tensor_map.clear();
+    ggml_cuda_tensor_name_map.clear();
+}
+
+// ============================================================================
+// CUDA Tensor Access Counting Hook (Option D: Wrapper Function)
+// ============================================================================
+// This hook is called from CUDA kernels to track tensor accesses.
+// It looks up the tensor name from the CUDA tensor map and records
+// the access count.
+// ============================================================================
+
+void ggml_cuda_tensor_access(const ggml_tensor * tensor, int access_count) {
+    if (!tensor) {
+        return;
+    }
+
+    const char * tensor_name = ggml_get_name(tensor);
+    if (!tensor_name) {
+        return;
+    }
+
+    // Look up the tensor name in the CUDA tensor map
+    // If found, we can resolve it to a GGUF tensor index
+    // For now, just log the access (diagnostic mode)
+    DIAG_DBG("  [CUDA TENSOR ACCESS] tensor=%p name=%s access_count=%d\n",
+             (void *)tensor, tensor_name, access_count);
+
+    GGML_UNUSED(access_count);
+}
+
+// Wrapper function for CUDA tensor data access with counting hook
+// Replaces direct src->data / dst->data accesses in CUDA kernels
+inline void * ggml_cuda_access_tensor(void * data, const ggml_tensor * tensor, int inc) {
+    ggml_cuda_tensor_access(tensor, inc);
+    return data;
+}
+
+#define GGML_CUDA_NAME_TENSOR(data, tensor) ggml_cuda_access_tensor((data), (tensor), 1)
+
+// ============================================================================
+// CUDA Tensor Name Parsing (for tensor access counting)
+// ============================================================================
+// This function extracts the GGUF tensor name from a CUDA tensor name.
+// CUDA tensors are named with the pattern: "CUDA0#{gguf_tensor_name}#N"
+// where N is a numeric suffix. This function strips the prefix and suffix
+// to return the GGUF tensor name.
+//
+// Example: "CUDA0#blk.0.attn_norm.weight#0" -> "blk.0.attn_norm.weight"
+//
+// Returns: static thread_local std::string with the GGUF tensor name,
+//          or empty string if parsing fails.
+// ============================================================================
+
+static std::string ggml_cuda_parse_tensor_name(const char * cuda_tensor_name) {
+    static thread_local std::string result;
+    result.clear();
+
+    if (!cuda_tensor_name) {
+        return result;
+    }
+
+    // Avoid std::string allocation — use pointer arithmetic directly
+    const char * p = cuda_tensor_name;
+
+    // Try to find "CUDA" prefix followed by digits and '#'
+    // Pattern: "CUDA0#", "CUDA1#", "CUDA2#", etc.
+    const char * cuda_prefix = strstr(p, "CUDA");
+    if (!cuda_prefix) {
+        return result;
+    }
+
+    const char * hash_pos = strchr(cuda_prefix + 4, '#');
+    if (!hash_pos) {
+        return result;
+    }
+
+    // Extract the middle part (GGUF tensor name) — start after the first '#'
+    const char * gguf_start = hash_pos + 1;
+
+    // Find the end of the string
+    const char * end = gguf_start;
+    while (*end != '\0') {
+        ++end;
+    }
+
+    // Strip trailing "#N" suffix (e.g., "#0", "#1", "#123")
+    const char * last_hash = nullptr;
+    for (const char * q = end - 1; q >= gguf_start; --q) {
+        if (*q == '#') {
+            last_hash = q;
+            break;
+        }
+    }
+
+    if (last_hash) {
+        // Check if the suffix after '#' is all digits
+        bool is_number = true;
+        for (const char * q = last_hash + 1; q < end; ++q) {
+            if (!isdigit(static_cast<unsigned char>(*q))) {
+                is_number = false;
+                break;
+            }
+        }
+        if (is_number) {
+            result.assign(gguf_start, last_hash - gguf_start);
+            return result;
+        }
+    }
+
+    // No suffix to strip — return the full middle part
+    result.assign(gguf_start, end - gguf_start);
+    return result;
+}
+
+// ============================================================================
+// CUDA Tensor Name to GGUF Tensor ID Resolution
+// ============================================================================
+// This function resolves a CUDA tensor name to a GGUF tensor ID.
+// It parses the CUDA tensor name to extract the GGUF tensor name,
+// then looks up the GGUF tensor ID from the provided map.
+//
+// Parameters:
+//   cuda_tensor_name: The CUDA tensor name (e.g., "CUDA0#blk.0.attn_norm.weight#0")
+//   model_tensor_id_map: Map from GGUF tensor name to GGUF tensor ID
+//
+// Returns:
+//   GGUF tensor ID if found, -1 otherwise
+// ============================================================================
+
+int32_t ggml_cuda_resolve_tensor_id(const char * cuda_tensor_name,
+                                     const std::unordered_map<std::string, int32_t> * model_tensor_id_map) {
+    if (!cuda_tensor_name || !model_tensor_id_map) {
+        return -1;
+    }
+
+    std::string gguf_tensor_name = ggml_cuda_parse_tensor_name(cuda_tensor_name);
+    if (gguf_tensor_name.empty()) {
+        return -1;
+    }
+
+    auto it = model_tensor_id_map->find(gguf_tensor_name);
+    if (it != model_tensor_id_map->end()) {
+        return it->second;
+    }
+
+    return -1;
+}
+
 ggml_backend_cuda_context::~ggml_backend_cuda_context() {
     std::unique_lock<std::mutex> lock(ggml_cuda_lock);
     ggml_cuda_lock_cv.wait(lock, []{ return ggml_cuda_lock_counter.load(std::memory_order_relaxed) == 0; });
@@ -658,6 +866,12 @@ static enum ggml_status ggml_backend_cuda_buffer_init_tensor(ggml_backend_buffer
     if (tensor->view_src != NULL) {
         assert(tensor->view_src->buffer->buft == buffer->buft);
         return GGML_STATUS_SUCCESS;
+    }
+
+    // Register this CUDA tensor with its name for allocation tracking
+    // Only register tensors that have a name and are not views
+    if (tensor->data != nullptr && tensor->name[0] != '\0') {
+        ggml_cuda_register_tensor(tensor->data, tensor->name);
     }
 
     if (ggml_is_quantized(tensor->type) && tensor->view_src == nullptr && ggml_backend_buffer_get_usage(buffer) != GGML_BACKEND_BUFFER_USAGE_COMPUTE) {
@@ -1928,7 +2142,7 @@ static void ggml_cuda_op_mul_mat(
         cudaStream_t stream = ctx.stream(id, 0);
 
         if (src0_is_contiguous) {
-            dev[id].src0_dd = split ? (char *) src0_extra->data_device[id] : (char *) src0->data;
+            dev[id].src0_dd = split ? (char *) src0_extra->data_device[id] : (char *) GGML_CUDA_NAME_TENSOR(src0->data, src0);
         } else {
             // If src0 is not contiguous it will be copied to a temporary buffer.
             // This buffer needs to be cleared entirely because multiple regions will function as padding.
@@ -1948,7 +2162,7 @@ static void ggml_cuda_op_mul_mat(
         }
 
         if (src1_on_device && src1_is_contiguous) {
-            dev[id].src1_ddf = (float *) src1->data;
+            dev[id].src1_ddf = (float *) GGML_CUDA_NAME_TENSOR(src1->data, src1);
         } else {
             dev[id].src1_ddf = dev[id].src1_ddf_alloc.alloc(ctx.pool(id), ggml_nelements(src1));
         }
@@ -1970,7 +2184,7 @@ static void ggml_cuda_op_mul_mat(
         }
 
         if (dst_on_device) {
-            dev[id].dst_dd = (float *) dst->data;
+            dev[id].dst_dd = (float *) GGML_CUDA_NAME_TENSOR(dst->data, dst);
         } else {
             const size_t size_dst_ddf = split ? (dev[id].row_high - dev[id].row_low)*ne1 : ggml_nelements(dst);
             dev[id].dst_dd = dev[id].dst_dd_alloc.alloc(ctx.pool(id), size_dst_ddf);
@@ -2045,7 +2259,7 @@ static void ggml_cuda_op_mul_mat(
                                     src1_ddq_i, id, src1_ddq_i_source, ctx.device, src1_ncols*src1_padded_col_size*q8_1_ts/q8_1_bs, stream));
                             }
                         } else {
-                            float * src1_ddf_i_source = (float *) src1->data;
+                            float * src1_ddf_i_source = (float *) GGML_CUDA_NAME_TENSOR(src1->data, src1);
                             src1_ddf_i_source += (i0*ne11 + src1_col_0) * ne10;
                             CUDA_CHECK(cudaMemcpyPeerAsync(src1_ddf_i, id, src1_ddf_i_source, ctx.device,
                                                             src1_ncols*ne10*sizeof(float), stream));
@@ -2077,7 +2291,7 @@ static void ggml_cuda_op_mul_mat(
 
                 // copy dst to host or other device if necessary
                 if (!dst_on_device) {
-                    void * dst_off_device = dst->data;
+                    void * dst_off_device = GGML_CUDA_NAME_TENSOR(dst->data, dst);
                     if (split) {
                         // src0 = weight matrix is saved as a transposed matrix for better memory layout.
                         // dst is NOT transposed.
@@ -2209,7 +2423,7 @@ static void ggml_cuda_mul_mat_batched_cublas_impl(ggml_backend_cuda_context & ct
     cudaStream_t main_stream = ctx.stream();
     CUBLAS_CHECK(cublasSetStream(ctx.cublas_handle(), main_stream));
 
-    float * dst_ddf = (float *) dst->data;
+    float * dst_ddf = (float *) GGML_CUDA_NAME_TENSOR(dst->data, dst);
     const size_t ts_src1 = ggml_type_size(src1->type);
     GGML_ASSERT(nb10 == ts_src1);
     int64_t s11 = nb11 / ts_src1;
@@ -2226,11 +2440,11 @@ static void ggml_cuda_mul_mat_batched_cublas_impl(ggml_backend_cuda_context & ct
     bool is_src1_cont_2 = ggml_is_contiguous_2(src1);
 
     // Handle src0
-    src0_ptr = (const cuda_t *) src0->data;
+    src0_ptr = (const cuda_t *) GGML_CUDA_NAME_TENSOR(src0->data, src0);
 
     // Handle src1 - convert if necessary
     if (src1->type == src0_type) {
-        src1_ptr = (const cuda_t *) src1->data;
+        src1_ptr = (const cuda_t *) GGML_CUDA_NAME_TENSOR(src1->data, src1);
     } else {
         // Convert src1 to target type using traits conversion functions
         const int64_t ne_src1 = ggml_nelements(src1);
@@ -2238,7 +2452,7 @@ static void ggml_cuda_mul_mat_batched_cublas_impl(ggml_backend_cuda_context & ct
 
         const auto convert_func = traits::get_nc_converter(src1->type);
         GGML_ASSERT(convert_func != nullptr);
-        convert_func(src1->data, src1_alloc.get(), ne10, ne11, ne12, ne13, s11, s12, s13, main_stream);
+        convert_func(GGML_CUDA_NAME_TENSOR(src1->data, src1), src1_alloc.get(), ne10, ne11, ne12, ne13, s11, s12, s13, main_stream);
         src1_ptr = src1_alloc.get();
         s11 = ne10;
         s12 = ne11*s11;
@@ -2700,7 +2914,7 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
     ggml_cuda_pool_alloc<char>  dst_sorted(ctx.pool(), ne2 *n_expert_used* ne0*ts_dst_sorted);
 
     std::vector<char> ids_host(ggml_nbytes(ids));
-    CUDA_CHECK(cudaMemcpyAsync(ids_host.data(), ids->data, ggml_nbytes(ids), cudaMemcpyDeviceToHost, stream));
+    CUDA_CHECK(cudaMemcpyAsync(ids_host.data(), GGML_CUDA_NAME_TENSOR(ids->data, ids), ggml_nbytes(ids), cudaMemcpyDeviceToHost, stream));
     CUDA_CHECK(cudaStreamSynchronize(stream));
 
     for (int64_t i02 = 0; i02 < ne02; ++i02) { // expert matrices
@@ -2727,7 +2941,7 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
     const int32_t * ids_to_sorted   = ids_buf_dev.ptr + 0*ne_get_rows;
     const int32_t * ids_from_sorted = ids_buf_dev.ptr + 1*ne_get_rows;
 
-    get_rows_cuda(src1->data, src1->type, ids_to_sorted, src1_sorted.ptr, type_src1_sorted,
+    get_rows_cuda(GGML_CUDA_NAME_TENSOR(src1->data, src1), src1->type, ids_to_sorted, src1_sorted.ptr, type_src1_sorted,
         ne10, nb11, nb12, nb13,
         ne_get_rows, 1, 1, sizeof(int32_t), ne_get_rows*sizeof(int32_t), ne_get_rows*sizeof(int32_t),
         ne10*ts_src1_sorted, ne_get_rows*ne10*ts_src1_sorted, ne_get_rows*ne10*ts_src1_sorted, stream);
@@ -2745,7 +2959,7 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
         src0_slice.nb[3]    = src0_slice.nb[2];
         src0_slice.op       = GGML_OP_VIEW;
         src0_slice.view_src = dst->src[0]; // non-const pointer to src0
-        src0_slice.data     = (char *) src0->data + i02*nb02;
+        src0_slice.data     = (char *) GGML_CUDA_NAME_TENSOR(src0->data, src0) + i02*nb02;
 
         ggml_tensor src1_slice;
         memset(&src1_slice, 0, sizeof(src1_slice));
@@ -2782,7 +2996,7 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
         dst_data_cur  +=  dst_slice.nb[2];
     }
 
-    get_rows_cuda(dst_sorted.ptr, type_dst_sorted, ids_from_sorted, dst->data, dst->type,
+    get_rows_cuda(dst_sorted.ptr, type_dst_sorted, ids_from_sorted, GGML_CUDA_NAME_TENSOR(dst->data, dst), dst->type,
         ne0, ne0*ts_dst_sorted, ne_get_rows*ne0*ts_dst_sorted, ne_get_rows*ne0*ts_dst_sorted,
         ne_get_rows, 1, 1, sizeof(int32_t), ne_get_rows*sizeof(int32_t), ne_get_rows*sizeof(int32_t),
         nb1, nb2, nb3, stream);

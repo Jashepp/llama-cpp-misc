@@ -793,7 +793,7 @@ bool ggml_cuda_ar_allreduce(
                 auto * cuda_ctx = static_cast<ggml_backend_cuda_context *>(backends[i]->context);
                 GGML_ASSERT(cuda_ctx->device == p->devices[i]);
                 ggml_cuda_set_device(p->devices[i]);
-                CUDA_CHECK(cudaMemsetAsync(tensors[i]->data, 0, (size_t) ne * sizeof(float), cuda_ctx->stream()));
+                CUDA_CHECK(cudaMemsetAsync(GGML_CUDA_NAME_TENSOR(tensors[i]->data, tensors[i]), 0, (size_t) ne * sizeof(float), cuda_ctx->stream()));
             }
         }
     }
@@ -813,7 +813,7 @@ bool ggml_cuda_ar_allreduce(
             bf16_tmp[i].alloc(ne);
             ggml_cuda_set_device(p->devices[i]);
             if (compute_flag[i]) {
-                to_bf16(tensors[i]->data, bf16_tmp[i].get(), ne, cuda_ctx->stream());
+                to_bf16(GGML_CUDA_NAME_TENSOR(tensors[i]->data, tensors[i]), bf16_tmp[i].get(), ne, cuda_ctx->stream());
                 CUDA_CHECK(cudaGetLastError());
             } else {
                 CUDA_CHECK(cudaMemsetAsync(bf16_tmp[i].get(), 0, nbytes, cuda_ctx->stream()));
@@ -834,7 +834,7 @@ bool ggml_cuda_ar_allreduce(
 
         // Dispatch into copy_impl with explicit src/dst types.  When use_bf16
         // is on, the wire type is BF16 (src = bf16_tmp) and the accumulator
-        // is F32 (dst = tensors[i]->data); the combined add kernel rounds dst
+        // is F32 (dst = GGML_CUDA_NAME_TENSOR(tensors[i]->data, tensors[i])); the combined add kernel rounds dst
         // through BF16 for bit-equivalence and writes F32 directly, so no
         // post-conversion is needed.  Otherwise src == dst (same native type).
         if (use_bf16) {
@@ -843,7 +843,7 @@ bool ggml_cuda_ar_allreduce(
             float       * dst[GGML_CUDA_MAX_DEVICES] = {};
             for (int i = 0; i < n; ++i) {
                 src[i] = static_cast<nv_bfloat16 *>(copy_src_ptr[i]);
-                dst[i] = static_cast<float *>(tensors[i]->data);
+                dst[i] = static_cast<float *>(GGML_CUDA_NAME_TENSOR(tensors[i]->data, tensors[i]));
             }
             ok = ggml_cuda_ar_allreduce_copy_outer<nv_bfloat16, float>(
                 p, backends, src, dst, inner_compute, ne);
@@ -852,7 +852,7 @@ bool ggml_cuda_ar_allreduce(
                 case GGML_TYPE_F32: {
                     float * buf[GGML_CUDA_MAX_DEVICES] = {};
                     for (int i = 0; i < n; ++i) {
-                        buf[i] = static_cast<float *>(tensors[i]->data);
+                        buf[i] = static_cast<float *>(GGML_CUDA_NAME_TENSOR(tensors[i]->data, tensors[i]));
                     }
                     ok = ggml_cuda_ar_allreduce_copy_outer<float, float>(
                         p, backends, buf, buf, inner_compute, ne);
@@ -861,7 +861,7 @@ bool ggml_cuda_ar_allreduce(
                 case GGML_TYPE_BF16: {
                     nv_bfloat16 * buf[GGML_CUDA_MAX_DEVICES] = {};
                     for (int i = 0; i < n; ++i) {
-                        buf[i] = static_cast<nv_bfloat16 *>(tensors[i]->data);
+                        buf[i] = static_cast<nv_bfloat16 *>(GGML_CUDA_NAME_TENSOR(tensors[i]->data, tensors[i]));
                     }
                     ok = ggml_cuda_ar_allreduce_copy_outer<nv_bfloat16, nv_bfloat16>(
                         p, backends, buf, buf, inner_compute, ne);
@@ -870,7 +870,7 @@ bool ggml_cuda_ar_allreduce(
                 case GGML_TYPE_F16: {
                     half * buf[GGML_CUDA_MAX_DEVICES] = {};
                     for (int i = 0; i < n; ++i) {
-                        buf[i] = static_cast<half *>(tensors[i]->data);
+                        buf[i] = static_cast<half *>(GGML_CUDA_NAME_TENSOR(tensors[i]->data, tensors[i]));
                     }
                     ok = ggml_cuda_ar_allreduce_copy_outer<half, half>(
                         p, backends, buf, buf, inner_compute, ne);
@@ -907,7 +907,7 @@ bool ggml_cuda_ar_allreduce(
                 GGML_ASSERT(cuda_ctx->device == p->devices[i]);
                 cudaStream_t stream = cuda_ctx->stream();
 
-                char * data = static_cast<char *>(tensors[i]->data) + chunk_start * (int64_t) input_type_size;
+                char * data = static_cast<char *>(GGML_CUDA_NAME_TENSOR(tensors[i]->data, tensors[i])) + chunk_start * (int64_t) input_type_size;
 
                 // Match NCCL/meta-backend semantics: inactive shards contribute
                 // zeros.  On the BF16 path the F32 tensor data was already

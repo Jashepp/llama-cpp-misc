@@ -13,7 +13,7 @@ static __global__ void fill_kernel(T * dst, const int64_t k, const T value) {
 }
 
 void ggml_cuda_op_fill(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
-    void * dst_d = dst->data;
+    void * dst_d = GGML_CUDA_NAME_TENSOR(dst->data, dst);
     cudaStream_t stream = ctx.stream();
 
     GGML_ASSERT(ggml_is_contiguous(dst));

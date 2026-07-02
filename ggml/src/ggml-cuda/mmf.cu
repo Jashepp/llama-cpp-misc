@@ -29,9 +29,9 @@ void ggml_cuda_mul_mat_f(ggml_backend_cuda_context & ctx, const ggml_tensor * sr
     GGML_ASSERT(!ids || ids->nb[0] == ggml_type_size(ids->type));
     GGML_ASSERT(        nb0        == ts_dst);
 
-    const float   * src1_d =       (const float   *) src1->data;
-    const int32_t *  ids_d = ids ? (const int32_t *)  ids->data : nullptr;
-    float         *  dst_d =       (float         *)  dst->data;
+    const float   * src1_d =       (const float   *)GGML_CUDA_NAME_TENSOR(src1->data, src1);
+    const int32_t *  ids_d = ids ? (const int32_t *)GGML_CUDA_NAME_TENSOR(ids->data, ids) : nullptr;
+    float         *  dst_d =       (float         *)GGML_CUDA_NAME_TENSOR(dst->data, dst);
 
     const int64_t s01 = src0->nb[1] / ts_src0;
     const int64_t s11 = src1->nb[1] / ts_src1;
@@ -102,7 +102,7 @@ void ggml_cuda_mul_mat_f(ggml_backend_cuda_context & ctx, const ggml_tensor * sr
 
     switch (src0->type) {
         case GGML_TYPE_F32: {
-            const float * src0_d = (const float *) src0->data;
+            const float * src0_d = (const float *)GGML_CUDA_NAME_TENSOR(src0->data, src0);
             constexpr int vals_per_T = 1;
             mul_mat_f_switch_rows_per_block<float>(
                 rows_per_block, src0_d, src1_d, ids_d, dst_d, ne00/vals_per_T, ne01, ncols_dst, s01/vals_per_T, stride_col_y/vals_per_T, stride_col_dst,
@@ -110,7 +110,7 @@ void ggml_cuda_mul_mat_f(ggml_backend_cuda_context & ctx, const ggml_tensor * sr
                 ne03, ne3, s03/vals_per_T, s13, s3, ctx.stream(), ids_info_ptr);
         } break;
         case GGML_TYPE_F16: {
-            const half2 * src0_d = (const half2 *) src0->data;
+            const half2 * src0_d = (const half2 *)GGML_CUDA_NAME_TENSOR(src0->data, src0);
             constexpr int vals_per_T = 2;
             mul_mat_f_switch_rows_per_block<half2>(
                 rows_per_block, src0_d, src1_d, ids_d, dst_d, ne00/vals_per_T, ne01, ncols_dst, s01/vals_per_T, stride_col_y/vals_per_T, stride_col_dst,
@@ -118,7 +118,7 @@ void ggml_cuda_mul_mat_f(ggml_backend_cuda_context & ctx, const ggml_tensor * sr
                 ne03, ne3, s03/vals_per_T, s13, s3, ctx.stream(), ids_info_ptr);
         } break;
         case GGML_TYPE_BF16: {
-            const nv_bfloat162 * src0_d = (const nv_bfloat162 *) src0->data;
+            const nv_bfloat162 * src0_d = (const nv_bfloat162 *)GGML_CUDA_NAME_TENSOR(src0->data, src0);
             constexpr int vals_per_T = 2;
             mul_mat_f_switch_rows_per_block<nv_bfloat162>(
                 rows_per_block, src0_d, src1_d, ids_d, dst_d, ne00/vals_per_T, ne01, ncols_dst, s01/vals_per_T, stride_col_y/vals_per_T, stride_col_dst,

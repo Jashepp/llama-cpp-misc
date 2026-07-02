@@ -4,6 +4,7 @@
 #include "build-info.h"
 #include "common.h"
 #include "fit.h"
+#include "../src/llama-context.h"
 #include "log.h"
 #include "llama.h"
 #include "sampling.h"
@@ -1294,6 +1295,9 @@ common_init_result::common_init_result(common_params & params, bool model_only) 
         COM_ERR("failed to create context with model '%s'\n", params.model.path.c_str());
         return;
     }
+
+    // Enable tensor access stats if requested via CLI flag
+    lctx->tensor_access_stats_enabled = params.sampling.tensor_access_stats;
 
     pimpl->context.reset(lctx);
 }

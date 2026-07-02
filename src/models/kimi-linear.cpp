@@ -232,7 +232,8 @@ static ggml_tensor * causal_conv1d(ggml_cgraph * gf, ggml_context * ctx0, ggml_t
 }
 
 llama_model_kimi_linear::graph::graph(const llama_model & model, const llm_graph_params & params) :
-    llm_build_delta_net_base(params), model(model) {
+    llm_build_delta_net_base(model, params), model(model) {
+    set_model(&model);
     ggml_tensor * cur;
     ggml_tensor * inpL;
 

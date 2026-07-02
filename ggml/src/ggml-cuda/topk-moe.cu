@@ -341,10 +341,10 @@ void ggml_cuda_op_topk_moe(ggml_backend_cuda_context &     ctx,
     const int n_experts = logits->ne[0];
     const int n_rows    = logits->ne[1];
 
-    const float * logits_d  = (const float *) logits->data;
-    float *       weights_d = (float *) weights->data;
-    int32_t *     ids_d     = (int32_t *) ids->data;
-    float *       bias_d    = bias ? (float *) bias->data : nullptr;
+    const float * logits_d  = (const float *)GGML_CUDA_NAME_TENSOR(logits->data, logits);
+    float *       weights_d = (float *)GGML_CUDA_NAME_TENSOR(weights->data, weights);
+    int32_t *     ids_d     = (int32_t *)GGML_CUDA_NAME_TENSOR(ids->data, ids);
+    float *       bias_d    = bias ? (float *)GGML_CUDA_NAME_TENSOR(bias->data, bias) : nullptr;
 
     float scale_val = scale ? ggml_get_op_params_f32(scale, 0) : 1.0f;
 

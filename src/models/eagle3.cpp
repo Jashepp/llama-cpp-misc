@@ -125,7 +125,7 @@ ggml_tensor * llama_model_eagle3::graph<true>::build_inp_embd_enc() const {
 // Input: target_features e.g. [12288, n_tokens] from target model layers low, middle, high
 // Output: g_embeddings e.g. [4096, n_tokens] stored in context
 template <>
-llama_model_eagle3::graph<true>::graph(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
+llama_model_eagle3::graph<true>::graph(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) { set_model(&model); 
     ggml_tensor * cur = nullptr;
 
     cur = build_inp_embd_enc();
@@ -146,7 +146,7 @@ llama_model_eagle3::graph<true>::graph(const llama_model & model, const llm_grap
 // Input: draft tokens + g_embeddings from encoder
 // Output: draft logits
 template <>
-llama_model_eagle3::graph<false>::graph(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
+llama_model_eagle3::graph<false>::graph(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) { set_model(&model); 
     const int64_t n_embd_head = hparams.n_embd_head_v();
 
     GGML_ASSERT(n_embd_head == hparams.n_embd_head_k());

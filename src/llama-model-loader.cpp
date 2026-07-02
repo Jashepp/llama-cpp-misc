@@ -704,6 +704,33 @@ llama_model_loader::llama_model_loader(
     n_kv      = gguf_get_n_kv(metadata);
     n_tensors = weights_map.size();
 
+    // Build tensor name -> GGUF tensor index mapping for tensor access counting
+    for (const auto & kv : weights_map) {
+        const std::string & name = kv.first;
+        const int tensor_idx = gguf_find_tensor(metadata, name.c_str());
+        if (tensor_idx >= 0) {
+            tensor_id_map[name] = tensor_idx;
+            // Map CPU data pointer to tensor ID for tensor access counting.
+            // CRITICAL: For CUDA/GPU tensors, ret->data is a GPU pointer that CANNOT be reliably
+            // looked up from CPU side during inference. GPU pointers are CPU-inaccessible and
+            // won't match during data-address-based lookup (which uses CPU-side pointer comparison).
+            // Solution: Only map CPU (host) data pointers to data_addr_to_gguf_tensor_map.
+            // CUDA tensors are handled via name-based lookup in CB Method 3.
+            const ggml_tensor * ret = kv.second.tensor;
+            if (ret && ret->data) {
+                if (ggml_backend_buffer_is_host(ret->buffer)) {
+                    // CPU-only buffers: safe to map data pointer
+                    data_addr_to_gguf_tensor_map[(void *) ret->data] = tensor_idx;
+                } else if (ggml_is_view(ret) && ret->view_src != nullptr && ret->view_src->buffer != nullptr) {
+                    // For view tensors with CUDA source: compute from view source buffer (which IS host)
+                    void * data_addr = (void *) ((char *) ggml_backend_buffer_get_base(ret->view_src->buffer) + ret->view_offs);
+                    data_addr_to_gguf_tensor_map[(void *) data_addr] = tensor_idx;
+                }
+                // Non-view CUDA tensors: skip — data pointer can't be looked up from CPU
+            }
+        }
+    }
+
     fver = (enum llama_fver) gguf_get_version(metadata);
 
     LLAMA_LOG_INFO("%s: loaded meta data with %d key-value pairs and %d tensors from %s (version %s)\n",
@@ -1250,6 +1277,7 @@ struct ggml_tensor * llama_model_loader::create_tensor(
         ggml_context * ctx = ctx_for_buft(buft);
         ggml_tensor * ret = ggml_dup_tensor(ctx, &t_meta);
         ggml_set_name(ret, tn.str().c_str());
+        n_created++;
         return ret;
     }
 

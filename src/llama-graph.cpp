@@ -13,6 +13,10 @@
 #include "llama-memory-hybrid-iswa.h"
 #include "llama-memory-recurrent.h"
 
+#include "ggml-cuda.h"
+
+#include "ggml-backend.h"
+
 #include <cassert>
 #include <cmath>
 #include <cstring>
@@ -1201,6 +1205,12 @@ void llm_graph_result::reset() {
     t_sampled_logits.clear();
     t_candidates.clear();
 
+    // Clear tensor access mapping when the entire graph is being rebuilt.
+    // During graph reuse, the existing tensor_access_map remains valid for the
+    // same GF (graph flow). If this is called because the graph flow changed,
+    // the map is cleared here to avoid stale entries from the previous graph.
+    tensor_access_map.clear();
+
     params = {};
 
     inputs.clear();
@@ -1352,6 +1362,9 @@ llm_graph_context::llm_graph_context(const llm_graph_params & params) :
     cross            (params.cross),
     samplers         (params.samplers),
     cb_func          (params.cb),
+    model_tensor_id_map(params.model_tensor_id_map),
+    model_data_addr_map(params.model_data_addr_map),
+    model            (nullptr), // set by caller via set_model()
     res              (params.res),
     ctx0             (res->get_ctx()),
     gf               (res->get_gf()) {
@@ -1361,6 +1374,241 @@ llm_graph_context::llm_graph_context(const llm_graph_params & params) :
 void llm_graph_context::cb(ggml_tensor * cur, const char * name, int il) const {
     if (cb_func) {
         cb_func(ubatch, cur, name, il);
+    }
+
+    // Populate tensor_access_map: convert GGUF tensor name to GGUF tensor index
+    // If cur is NULL, skip tensor access counting for intermediate nodes
+    //
+    // FIX: If cur is NULL or res is NULL, return early (skip tensor access counting for intermediate nodes).
+    // ALSO: Only clear tensor_access_map when creating a new res, never during reuse
+    // to ensure the map persists for inference lookups.
+    if (!cur || !res) {
+        return;
+    }
+
+    // Populate tensor_access_map: convert GGUF tensor name to GGUF tensor index
+    // IMPORTANT: cb is called for the OUTPUT of GGML operations (like ggml_norm, ggml_mul_mat).
+    // GGUF weight tensors are INPUT tensors to GGML operations — they appear as cur->src[0],
+    // NOT as cur. cb is NOT called for src tensors. We must populate tensor_access_map
+    // for src tensors here so they can be found during tensor_access_count lookup.
+    {
+        llm_graph_result *                                 tmp_res           = res;
+        std::unordered_map<const ggml_tensor *, int32_t> & tensor_access_map = tmp_res->tensor_access_map;
+
+        // DIAG: Log tensor_access_map size at CB start (once per prompt via static guard)
+        // This helps detect when the map is empty (res mismatch or was cleared)
+        static thread_local bool did_map_size_diag = false;
+        if (!did_map_size_diag && tensor_access_map.empty()) {
+            LLAMA_LOG_DEBUG("[CB] %s: tensor_access_map is empty at CB start (res=%p, name=%s)\n", __func__,
+                            (void *) tmp_res, name ? name : "(NULL name)");
+            did_map_size_diag = true;
+        }
+
+        // Method 1: Look up cur via the builder's name parameter
+        if (model_tensor_id_map != nullptr) {
+            auto it = model_tensor_id_map->find(name);
+            if (it != model_tensor_id_map->end() && !tensor_access_map.count(cur)) {
+                // This is a GGUF weight tensor - found via the name parameter
+                tensor_access_map[cur] = it->second;
+            }
+        }
+
+        // Method 2: Look up cur via ggml_get_name(cur) for GGUF weight tensors.
+        // The builder's `name` parameter is NOT the GGUF name for intermediate tensors (like "q", "k", "kq").
+        // But raw GGUF weight tensors that pass through have GGUF names via ggml_set_name(ret, tn.str().c_str()).
+        // Check for the same tensor in res->tensor_access_map to avoid overwriting the builder's name mapping.
+        //
+        // CRITICAL FIX: After name-based mappings fail, also try data-address-based mapping.
+        // The same GGUF weight tensor can appear as different ggml_tensor* pointers across phases.
+        // Both 'cur' and 'res->data_addr_to_gguf_tensor_map' use cur as key, but during inference
+        // the src pointer differs → name lookup then data-address lookup are BOTH needed.
+        //
+        // FIX: Check ggml_get_name against NULL to prevent segfaults with intermediate tensors.
+        if (model_tensor_id_map != nullptr && !tensor_access_map.count(cur)) {
+            const char * gname = ggml_get_name(cur);
+            DIAG_INF("  Method 2: ggml_get_name(cur) = %s\n", gname ? gname : "(NULL)");
+            if (gname) {
+                auto it2 = model_tensor_id_map->find(gname);
+                if (it2 != model_tensor_id_map->end()) {
+                    // This is a GGUF weight tensor - found via ggml_get_name
+                    tensor_access_map[cur] = it2->second;
+                    DIAG_INF("  Method 2 FOUND: tensor_access_map[cur=%p] = %d\n", cur, it2->second);
+                }
+            }
+        }
+
+        // CRITICAL FIX: Before Method 3, also add data-address-based mapping for cur.
+        // When name-based lookup fails for cur (after Method 1/2), try mapping by its data pointer.
+        // This handles the case where the inference phase sees a different ggml_tensor* pointer
+        // with the SAME underlying data address as the CB phase.
+        if (model_data_addr_map != nullptr && !tensor_access_map.count(cur)) {
+            // Solution A: Use buffer-based data address computation instead of cur->data.
+            // When tensor->data is zero (e.g., CUDA tensors at CB phase), the buffer-based
+            // approach retrieves the correct data address from ggml_backend_buffer_get_base()
+            // + tensor offset. This works because ggml_tensor->buffer contains the backend
+            // buffer that owns the tensor data, and ggml_backend_buffer_get_base() returns
+            // the base address of that buffer.
+            // For view tensors: use view_src->buffer + view_offs
+            // For regular tensors: cur->offset gives the data offset within the buffer
+            void * data_addr = nullptr;
+            // Try direct pointer first (for CPU tensors where ggml_get_data(cur) is valid)
+            if (ggml_get_data(cur) != nullptr) {
+                data_addr = (void *) ggml_get_data(cur);
+            }
+            // Then try buffer-based computation (for CUDA/GPU tensors where cur->data may be zero)
+            // NOTE: ggml_backend_buffer_t is a pointer to incomplete type, so pointer arithmetic
+            // must be done on void* (base address), NOT on ggml_backend_buffer_t.
+            if (data_addr == nullptr && cur->buffer != nullptr) {
+                // For view tensors: use view_src buffer base + view offset
+                if (ggml_is_view(cur) && cur->view_src != nullptr) {
+                    ggml_backend_buffer_t vbuf = cur->view_src->buffer;
+                    if (vbuf != nullptr) {
+                        data_addr = (void *) ((char *) ggml_backend_buffer_get_base(vbuf) + cur->view_offs);
+                    }
+                }
+                // For regular tensors: try base buffer address
+                // If cur->buffer is the tensor buffer AND buffer has a base, use it
+                else {
+                    data_addr = (void *) ggml_backend_buffer_get_base(cur->buffer);
+                }
+            }
+            // Debug logging (Solution C): log WHY cur->data is zeroed
+            // Uses cur->buffer to check if tensor is on a GPU/backend (non-NULL buffer = GPU/backend tensor)
+            DIAG_DBG("  [CB SOL-C DATA_ADDR DEBUG] tensor=%p, cur->data=%p, cur->buffer=%p, "
+                     "view_src=%p, view_offs=%zu, buf_base=%p, is_view=%d, computed_data=%p, "
+                     "name=%s, buf_usage=%d\n",
+                     (void *)cur, (void *)cur->data, (void *)cur->buffer,
+                     cur->view_src != nullptr ? (void *)cur->view_src : nullptr,
+                     cur->view_offs,
+                     cur->buffer != nullptr ? (void *)ggml_backend_buffer_get_base(cur->buffer) : nullptr,
+                     ggml_is_view(cur) ? 1 : 0,
+                     data_addr,
+                     ggml_get_name(cur) ? ggml_get_name(cur) : "(NULL)",
+                     cur->buffer != nullptr ? (int)ggml_backend_buffer_get_usage(cur->buffer) : -1);
+            if (data_addr != nullptr) {
+                auto it2 = model_data_addr_map->find(data_addr);
+                if (it2 != model_data_addr_map->end()) {
+                    tensor_access_map[(const ggml_tensor *) cur] = it2->second;
+                    DIAG_INF("  Method 2c DATA_ADDR: cur->data=%p → map=%p, id=%d, name=%s\n",
+                                (void *)cur, (void *)cur, it2->second,
+                                ggml_get_name(cur) ? ggml_get_name(cur) : "(NULL)");
+                } else {
+                    DIAG_DBG("  Method 2c DATA_ADDR: computed_data=%p NOT FOUND in data_addr_map\n",
+                                (void *)data_addr);
+                }
+            } else {
+                DIAG_DBG("  Method 2c DATA_ADDR: No valid data address (cur->data=%p, cur->buffer=%p)\n",
+                            (void *)cur->data, (void *)cur->buffer);
+            }
+        }
+
+        // Method 3: Look up src tensors (cur->src[0], cur->src[1], etc.) for GGUF weight tensors.
+        // cb is NOT called for src tensors — only for cur (the output of GGML operations).
+        // This is the CORRECT method for populating tensor_access_map for most GGUF weight tensors:
+        // They are accessed via cur->src[0] during cb, but cb is never called for them directly.
+        //
+        // CRITICAL FIX: In Method 3, also use data-address mapping as the LAST RESORT when
+        // name-based lookups fail. This handles pointer aliasing: the same GGUF weight tensor
+        // may appear as different ggml_tensor* pointers across phases.
+        //
+        // FIX: Ensure tensor_access_map is never cleared during graph reuse.
+        // The map should only be cleared when res is freshly created (not reused).
+        if (model_tensor_id_map != nullptr) {
+            DIAG_DBG("  [CB] Method 3: model_tensor_id_map->size() = %zu, map_data_addr=%p\n",
+                        model_tensor_id_map->size(), (void *) model_tensor_id_map);
+            for (int i = 0; i < GGML_MAX_SRC; i++) {
+                ggml_tensor * src = cur->src[i];
+                if (!src) {
+                    continue;
+                }
+                // DIAG FIX: When map is still empty, log once to diagnose res mismatch
+                if (tensor_access_map.empty() && i == 0) {
+                    LLAMA_LOG_DEBUG("[CB] %s: tensor_access_map still empty when checking src[%d] (res=%p)\n",
+                                    __func__, i, (void *) res);
+                }
+                const char * src_gname = ggml_get_name(src);
+                DIAG_INF(
+                    "  Method 3: src[%d](%p) %s, ggml_get_name=%s, map=%s, data=%p\n", i, src,
+                    tensor_access_map.count(src) ? "already_map" : "new", src_gname ? src_gname : "(NULL)",
+                    model_tensor_id_map ? (model_tensor_id_map->empty() ? "map_empty" : "map_non_empty") : "(NULL)",
+                    src->data);
+                // Skip if tensor already in map (avoid overwriting)
+                if (tensor_access_map.count(src)) {
+                    DIAG_DBG("  Method 3 SKIP: src already in tensor_access_map (id=%d)\n", tensor_access_map[src]);
+                    continue;
+                }
+                // Look up src via ggml_get_name — this returns the GGUF name for GGUF weight tensors
+                if (src_gname) {
+                    DIAG_INF("  Method 3a: ggml_get_name(src)='%s'\n", src_gname);
+                    // Look up src via ggml_get_name — this returns the GGUF name for GGUF weight tensors
+                    auto it3 = model_tensor_id_map->find(src_gname);
+                    if (it3 != model_tensor_id_map->end()) {
+                        // This is a GGUF weight tensor found via src lookup
+                        // Use src as the key since src will be looked up directly during tensor_access_count
+                        tensor_access_map[(const ggml_tensor *) src] = it3->second;
+                        DIAG_INF("  Method 3a FOUND: tensor_access_map[src=%p] = %d (name=%s)\n", (void *) src,
+                                    it3->second, src_gname);
+                    } else {
+                        // Method 3c: Resolve CUDA tensor name to GGUF tensor ID using ggml_cuda_resolve_tensor_id
+                        // Pattern: "CUDA0#blk.0.attn_norm.weight#0" -> "blk.0.attn_norm.weight" -> GGUF tensor ID
+                        int32_t cuda_resolved_id = ggml_cuda_resolve_tensor_id(src_gname, model_tensor_id_map);
+                        if (cuda_resolved_id >= 0 && !tensor_access_map.count(src)) {
+                            DIAG_INF(
+                                "  Method 3c SUCCESS: Tensor mapped via ggml_cuda_resolve_tensor_id, cuda_name='%s', id=%d\n",
+                                src_gname, cuda_resolved_id);
+                            tensor_access_map[(const ggml_tensor *) src] = cuda_resolved_id;
+                        }
+                    }
+                } else {
+                    DIAG_INF("  Method 3a SKIP: ggml_get_name(src)=%s\n", src_gname ? "exists" : "(NULL)");
+                }
+
+                // CRITICAL FIX: When name-based lookups fail for src, try data-address mapping.
+                // The same GGUF weight tensor can appear as different ggml_tensor* pointers across phases.
+                // If method 3a/3c fails because cur->src[j] is a different pointer but same data,
+                // the data-address map should still find the correct GGUF tensor index.
+                //
+                // SOLUTION A (Best): Use buffer-based data address computation instead of src->data.
+                // When tensor->data is zero (e.g., CUDA tensors at CB phase), the buffer-based
+                // approach retrieves the correct data address from ggml_backend_buffer_get_base()
+                // + tensor offset. This works because ggml_tensor->buffer contains the backend
+                // buffer that owns the tensor data, and ggml_backend_buffer_get_base() returns
+                // the base address of that buffer.
+                if (model_data_addr_map != nullptr && !tensor_access_map.count(src)) {
+                    void * data_addr = (void *) ggml_get_data(src);
+                    // If ggml_get_data(src) returns zero, try buffer-based computation (for CUDA/GPU tensors)
+                    // NOTE: ggml_backend_buffer_t is a pointer to incomplete type, so pointer arithmetic
+                    // must be done on void* (base address), NOT on ggml_backend_buffer_t.
+                    if (data_addr == nullptr && src->buffer != nullptr) {
+                        if (ggml_is_view(src) && src->view_src != nullptr) {
+                            ggml_backend_buffer_t vbuf = src->view_src->buffer;
+                            if (vbuf != nullptr) {
+                                data_addr = (void *) ((char *) ggml_backend_buffer_get_base(vbuf) + src->view_offs);
+                            }
+                        } else if (src->buffer != nullptr) {
+                            data_addr = (void *) ggml_backend_buffer_get_base(src->buffer);
+                        }
+                    }
+                    if (data_addr != nullptr) {
+                        auto it = model_data_addr_map->find(data_addr);
+                        if (it != model_data_addr_map->end()) {
+                            tensor_access_map[(const ggml_tensor *) src] = it->second;
+                            DIAG_INF("  Method 3d DATA_ADDR FALLBACK: src=%p → data=%p → id=%d (ggml_get_name=%s)\n",
+                                        (void *)src, (void *)data_addr, it->second,
+                                        ggml_get_name(src) ? ggml_get_name(src) : "(NULL)");
+                        } else {
+                            DIAG_DBG("  Method 3d DATA_ADDR: src=%p → data=%p NOT FOUND in data_addr_map\n",
+                                        (void *)src, (void *)data_addr);
+                        }
+                    } else {
+                        DIAG_DBG("  Method 3d DATA_ADDR: src=%p no valid data address (ggml_get_data(src)=%p, src->buffer=%p)\n",
+                                    (void *)src, (void *)ggml_get_data(src), (void *)src->buffer);
+                    }
+                }
+            }
+        } else {
+            DIAG_INF("  Method 3 SKIP: model_tensor_id_map is NULL\n");
+        }
     }
 }
 
@@ -3473,6 +3721,16 @@ void llm_graph_context::build_sampling() const {
         }
     }
     */
+}
+
+void llm_graph_context ::set_model_diag(const llama_model * m) {
+    if (m == nullptr) {
+        DIAG_INF("[set_model_diag] m = nullptr\n");
+        return;
+    }
+    DIAG_INF("[set_model_diag] tensor_id_map_size = %zu, data_addr_map_size = %zu\n",
+            m->tensor_id_map.size(),
+            m->data_addr_to_gguf_tensor_map.size());
 }
 
 int32_t llama_relative_position_bucket(llama_pos x, llama_pos y, uint64_t n_buckets, bool bidirectional) {

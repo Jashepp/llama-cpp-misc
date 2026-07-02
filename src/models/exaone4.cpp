@@ -86,6 +86,7 @@ std::unique_ptr<llm_graph_context> llama_model_exaone4::build_arch_graph(const l
 template <bool iswa>
 llama_model_exaone4::graph<iswa>::graph(const llama_model & model, const llm_graph_params & params) :
     llm_graph_context(params) {
+    set_model(&model);
     const int64_t n_embd_head = hparams.n_embd_head_k();
 
     GGML_ASSERT(n_embd_head == hparams.n_embd_head_v());

@@ -45,6 +45,7 @@ std::unique_ptr<llm_graph_context> llama_model_command_r::build_arch_graph(const
 
 llama_model_command_r::graph::graph(const llama_model & model, const llm_graph_params & params) :
     llm_graph_context(params) {
+    set_model(&model);
     const int64_t n_embd_head = hparams.n_embd_head_v();
 
     GGML_ASSERT(n_embd_head == hparams.n_embd_head_k());

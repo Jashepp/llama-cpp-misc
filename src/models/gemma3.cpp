@@ -81,7 +81,7 @@ std::unique_ptr<llm_graph_context> llama_model_gemma3::build_arch_graph(const ll
 }
 
 template <bool iswa>
-llama_model_gemma3::graph<iswa>::graph(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
+llama_model_gemma3::graph<iswa>::graph(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) { set_model(&model); 
     const int64_t n_embd_head = hparams.n_embd_head_k();
 
     ggml_tensor * cur;

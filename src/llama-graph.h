@@ -4,6 +4,7 @@
 #include "llama-batch.h"
 #include "llama-hparams.h"
 #include "llama-adapter.h"
+#include "llama-impl.h"
 
 #include <cstdint>
 #include <vector>
@@ -11,6 +12,7 @@
 #include <set>
 #include <functional>
 #include <map>
+#include <unordered_map>
 
 struct ggml_cgraph;
 struct ggml_context;
@@ -701,6 +703,13 @@ struct llm_graph_params {
 
     llm_graph_result * res;
 
+    // pointer to model's tensor_id_map for populating tensor_access_map during graph build
+    const std::unordered_map<std::string, int32_t> * model_tensor_id_map;
+
+    // pointer to model's data_addr_to_gguf_tensor_map for CB Method 3b (data pointer matching)
+    // Used to identify GGUF weight tensors within CUDA copies by comparing data pointers
+    const std::unordered_map<void *, int32_t> * model_data_addr_map;
+
     // return true if the "other" params would result in a graph with the same topology as with the current params
     //   having the same topology allows us to reuse the graph in some cases
     bool allow_reuse(const llm_graph_params & other) const {
@@ -777,6 +786,9 @@ struct llm_graph_params {
 
 class llm_graph_result {
 public:
+    // context replication graph: t_start_us being the context start timestamp for a client
+    int64_t t_start_us = 0;
+
     llm_graph_result(int64_t max_nodes);
 
     virtual ~llm_graph_result() = default;
@@ -836,6 +848,11 @@ public:
 
     int64_t max_nodes;
 
+    // Tensor access mapping: maps ggml_tensor* (src from a node) to the GGUF tensor index
+    // Populated during graph build via cb() callback, read during graph_compute
+    // Persists across graph reuse since graph topology doesn't change
+    std::unordered_map<const ggml_tensor *, int32_t> tensor_access_map;
+
 private:
     // keep a copy of the previous graph parameters
     // we will use this to determine whether the graph can be reused by comparing them with the new parameters
@@ -845,6 +862,10 @@ private:
     // env: LLAMA_GRAPH_RESULT_DEBUG
     int debug = 0;
 };
+
+// Tensor access mapping: maps ggml_tensor* (src from a node) to the GGUF tensor index
+// Populated during graph build via callback, read during graph_compute
+// Defined AFTER llm_graph_result so the class can use the type
 
 using llm_graph_result_ptr = std::unique_ptr<llm_graph_result>;
 
@@ -910,6 +931,39 @@ struct llm_graph_context {
     std::map<llama_seq_id, llama_sampler *> samplers;
 
     const llm_graph_cb & cb_func;
+
+    // pointer to model's tensor_id_map for populating tensor_access_map during graph build
+    // Stored here a copy because we don't want to keep a raw pointer to the model's tensor_id_map
+    // instead, we populate it from params.model_tensor_id_map which is only valid during graph build
+    const std::unordered_map<std::string, int32_t> * model_tensor_id_map;
+
+    // pointer to model's get_tensor() method for data pointer matching (cb Method 3b)
+    // This is needed to look up GGUF tensors by name when CUDA src tensors have no GGUF name
+    // Must be set by the graph subclass after llm_graph_context construction
+    const llama_model * model = nullptr;
+
+    void set_model(const llama_model * m) {
+        DIAG_INF("[set_model] m = %p, model = %p -> %p\n",
+                (void *)m, (void *)model, (void *)m);
+        model = m;
+    }
+
+    // diagnostic helper — implementation in llama-graph.cpp to avoid circular include
+    static void set_model_diag(const llama_model * m);
+
+    // pointer to model's data_addr_to_gguf_tensor_map, for CB Method 3b (data pointer matching)
+    // Used to identify GGUF weight tensors within CUDA copies by comparing data pointers
+    const std::unordered_map<void *, int32_t> * model_data_addr_map = nullptr;
+
+    // Tensor access mapping: maps ggml_tensor* (src from a node) to the GGUF tensor index
+    // Populated during graph_build via cb() callback, read during graph_compute
+    // Moved here (from llm_graph_result) for persistence across graph reuse
+    // NOTE: kept as a class member for backward compatibility, but the actual data is stored in llm_graph_result
+    //tensor_access_map_t tensor_access_map;
+
+    // Populated during graph build via cb() callback, read during graph_compute
+    // Removed: moved to llm_graph_result for persistence across graph reuse
+    //tensor_access_map_t tensor_access_map;
 
     llm_graph_result * res;
 

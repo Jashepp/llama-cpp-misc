@@ -6,6 +6,7 @@ std::unique_ptr<llm_graph_context> llama_model_paddleocr::build_arch_graph(const
 
 llama_model_paddleocr::graph::graph(const llama_model & model, const llm_graph_params & params) :
     llm_graph_context(params) {
+    set_model(&model);
 
     // NOTE: same with qwen2vl.cpp, but bias tensors are optional
 

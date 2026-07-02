@@ -60,7 +60,7 @@ std::unique_ptr<llm_graph_context> llama_model_minicpm3::build_arch_graph(const 
     return std::make_unique<graph>(*this, params);
 }
 
-llama_model_minicpm3::graph::graph(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
+llama_model_minicpm3::graph::graph(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) { set_model(&model); 
     //TODO: if the model varies, these parameters need to be read from the model
     const int64_t n_embd_base = 256;
     const float scale_embd  = 12.0f;

@@ -66,8 +66,8 @@ bool ggml_cuda_op_fwht(ggml_backend_cuda_context & ctx, const ggml_tensor * src,
     const int     n    = src->ne[0];
     const int64_t rows = ggml_nrows(src);
 
-    const float * src_d = (const float *) src->data;
-    float *       dst_d = (float *) dst->data;
+    const float * src_d = (const float *)GGML_CUDA_NAME_TENSOR(src->data, src);
+    float *       dst_d = (float *)GGML_CUDA_NAME_TENSOR(dst->data, dst);
 
     const int warp_size = ggml_cuda_info().devices[ggml_cuda_get_device()].warp_size;
     const int rows_per_block = 4;

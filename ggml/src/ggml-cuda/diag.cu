@@ -36,8 +36,8 @@ static __global__ void diag_kernel(T * __restrict__ dst,
 void ggml_cuda_op_diag(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * src0 = dst->src[0];
 
-    void *       dst_d  = dst->data;
-    const void * src0_d = src0->data;
+    void *       dst_d  = GGML_CUDA_NAME_TENSOR(dst->data, dst);
+    const void * src0_d = GGML_CUDA_NAME_TENSOR(src0->data, src0);
 
     cudaStream_t stream = ctx.stream();
 

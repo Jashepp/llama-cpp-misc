@@ -183,7 +183,7 @@ struct llama_context {
     //
     // perf
     //
-
+    // Tensor access counting (for --tensor-access-stats feature)
     llama_perf_context_data perf_get_data() const;
     void perf_reset();
 
@@ -243,6 +243,14 @@ public:
 
     // can reuse the llm_graph_result instance of the context (for example to update a memory module)
     llm_graph_result * get_gf_res_reserve() const;
+
+    // returns the previous graph result (used during graph_build for tensor_access_map)
+    llm_graph_result * get_gf_res_prev() const;
+
+    // returns the currently active graph result (the one used by the current graph_build/graph_compute cycle)
+    // This is the res object whose tensor_access_map was populated by cb() during the LAST graph_build
+    // Used in llama_get_tensor_access_count to get the correct tensor_access_map
+    llm_graph_result * get_gf_res_current() const;
 
     // returns the result of ggml_backend_sched_graph_compute_async execution
     ggml_status graph_compute(ggml_cgraph * gf, bool batched);
@@ -387,4 +395,22 @@ private:
     mutable int32_t n_eval   = 0; // number of eval calls
 
     mutable int32_t n_reused = 0; // number of times the previous graph was reused
+
+public:
+
+    // Raw src appearance counts in compute graph nodes: tensor pointer -> raw count
+    mutable std::map<ggml_tensor*, int32_t> tensor_access_count;
+
+    // GGUF tensor ID -> token-counted access count (post-processed)
+    mutable std::map<int32_t, int32_t> tensor_id_access_count;
+
+    // GGUF tensor ID -> access count (for C API lookup from ggml_tensor*)
+    // Maps ggml_tensor* -> GGUF tensor index
+    mutable std::unordered_map<const ggml_tensor *, int32_t> tensor_access_map;
+
+    // Tensors that contribute to KV cache count (need post-processing)
+    mutable std::set<ggml_tensor*> kv_tensors;
+
+    // Whether to print tensor access stats in llama_perf_context_print()
+    mutable bool tensor_access_stats_enabled = false;
 };

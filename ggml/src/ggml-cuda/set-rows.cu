@@ -219,8 +219,8 @@ static void set_rows_cuda(
 
 template<typename src_t, typename idx_t>
 static void set_rows_cuda(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
-    const src_t * src0_d = (const src_t *)src0->data;
-    const idx_t * src1_d = (const idx_t *)src1->data;
+    const src_t * src0_d = (const src_t *)GGML_CUDA_NAME_TENSOR(src0->data, src0);
+    const idx_t * src1_d = (const idx_t *)GGML_CUDA_NAME_TENSOR(src1->data, src1);
 
     GGML_TENSOR_BINARY_OP_LOCALS
 
@@ -229,7 +229,7 @@ static void set_rows_cuda(ggml_backend_cuda_context & ctx, const ggml_tensor * s
 
     if (dst->type == GGML_TYPE_F32) {
         set_rows_cuda(
-            src0_d, src1_d, (float*)dst->data,
+            src0_d, src1_d, (float*)GGML_CUDA_NAME_TENSOR(dst->data, dst),
             ne00, ne01, ne02, ne03,
             ne10, ne11, ne12, ne13,
             nb01, nb02, nb03,
@@ -239,7 +239,7 @@ static void set_rows_cuda(ggml_backend_cuda_context & ctx, const ggml_tensor * s
         );
     } else if (dst->type == GGML_TYPE_F16) {
         set_rows_cuda(
-            src0_d, src1_d, (half*)dst->data,
+            src0_d, src1_d, (half*)GGML_CUDA_NAME_TENSOR(dst->data, dst),
             ne00, ne01, ne02, ne03,
             ne10, ne11, ne12, ne13,
             nb01, nb02, nb03,
@@ -249,7 +249,7 @@ static void set_rows_cuda(ggml_backend_cuda_context & ctx, const ggml_tensor * s
         );
     } else if (dst->type == GGML_TYPE_BF16) {
         set_rows_cuda(
-            src0_d, src1_d, (nv_bfloat16*)dst->data,
+            src0_d, src1_d, (nv_bfloat16*)GGML_CUDA_NAME_TENSOR(dst->data, dst),
             ne00, ne01, ne02, ne03,
             ne10, ne11, ne12, ne13,
             nb01, nb02, nb03,
@@ -259,7 +259,7 @@ static void set_rows_cuda(ggml_backend_cuda_context & ctx, const ggml_tensor * s
         );
     } else if (dst->type == GGML_TYPE_Q4_0) {
         set_rows_cuda_quant<idx_t, block_q4_0, QK4_0, quantize_f32_q4_0_block>(
-            src0_d, src1_d, (block_q4_0*)dst->data,
+            src0_d, src1_d, (block_q4_0*)GGML_CUDA_NAME_TENSOR(dst->data, dst),
             ne00, ne01, ne02, ne03,
             ne10, ne11, ne12, ne13,
             nb01, nb02, nb03,
@@ -269,7 +269,7 @@ static void set_rows_cuda(ggml_backend_cuda_context & ctx, const ggml_tensor * s
         );
     } else if (dst->type == GGML_TYPE_Q4_1) {
         set_rows_cuda_quant<idx_t, block_q4_1, QK4_1, quantize_f32_q4_1_block>(
-            src0_d, src1_d, (block_q4_1*)dst->data,
+            src0_d, src1_d, (block_q4_1*)GGML_CUDA_NAME_TENSOR(dst->data, dst),
             ne00, ne01, ne02, ne03,
             ne10, ne11, ne12, ne13,
             nb01, nb02, nb03,
@@ -279,7 +279,7 @@ static void set_rows_cuda(ggml_backend_cuda_context & ctx, const ggml_tensor * s
         );
     } else if (dst->type == GGML_TYPE_Q5_0) {
         set_rows_cuda_quant<idx_t, block_q5_0, QK5_0, quantize_f32_q5_0_block>(
-            src0_d, src1_d, (block_q5_0*)dst->data,
+            src0_d, src1_d, (block_q5_0*)GGML_CUDA_NAME_TENSOR(dst->data, dst),
             ne00, ne01, ne02, ne03,
             ne10, ne11, ne12, ne13,
             nb01, nb02, nb03,
@@ -289,7 +289,7 @@ static void set_rows_cuda(ggml_backend_cuda_context & ctx, const ggml_tensor * s
         );
     } else if (dst->type == GGML_TYPE_Q5_1) {
         set_rows_cuda_quant<idx_t, block_q5_1, QK5_1, quantize_f32_q5_1_block>(
-            src0_d, src1_d, (block_q5_1*)dst->data,
+            src0_d, src1_d, (block_q5_1*)GGML_CUDA_NAME_TENSOR(dst->data, dst),
             ne00, ne01, ne02, ne03,
             ne10, ne11, ne12, ne13,
             nb01, nb02, nb03,
@@ -299,7 +299,7 @@ static void set_rows_cuda(ggml_backend_cuda_context & ctx, const ggml_tensor * s
         );
     } else if (dst->type == GGML_TYPE_Q8_0) {
         set_rows_cuda_quant<idx_t, block_q8_0, QK8_0, quantize_f32_q8_0_block>(
-            src0_d, src1_d, (block_q8_0*)dst->data,
+            src0_d, src1_d, (block_q8_0*)GGML_CUDA_NAME_TENSOR(dst->data, dst),
             ne00, ne01, ne02, ne03,
             ne10, ne11, ne12, ne13,
             nb01, nb02, nb03,
@@ -309,7 +309,7 @@ static void set_rows_cuda(ggml_backend_cuda_context & ctx, const ggml_tensor * s
         );
     } else if (dst->type == GGML_TYPE_IQ4_NL) {
         set_rows_cuda_quant<idx_t, block_iq4_nl, QK4_NL, quantize_f32_iq4_nl_block>(
-            src0_d, src1_d, (block_iq4_nl*)dst->data,
+            src0_d, src1_d, (block_iq4_nl*)GGML_CUDA_NAME_TENSOR(dst->data, dst),
             ne00, ne01, ne02, ne03,
             ne10, ne11, ne12, ne13,
             nb01, nb02, nb03,

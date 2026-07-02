@@ -77,8 +77,8 @@ void ggml_cuda_argmax(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const int64_t ne00  = src0->ne[0];
     const int64_t nrows = ggml_nrows(src0);
 
-    const float * src0_d = (const float *) src0->data;
-    int32_t     * dst_d  = (int32_t     *) dst->data;
+    const float * src0_d = (const float *)GGML_CUDA_NAME_TENSOR(src0->data, src0);
+    int32_t     * dst_d  = (int32_t     *)GGML_CUDA_NAME_TENSOR(dst->data, dst);
 
     cudaStream_t stream = ctx.stream();
 

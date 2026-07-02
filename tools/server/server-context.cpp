@@ -611,6 +611,28 @@ struct server_slot {
                 "   graphs reused = %10d\n",
                 llama_perf_context(ctx_tgt).n_reused);
 
+        // Tensor access stats (if enabled)
+        const auto * tensor_info = llama_get_tensor_access_count(ctx_tgt);
+        if (tensor_info != nullptr) {
+            std::string tensor_line = "tensors accessed: ";
+
+            // The API returns the array sorted by count descending, limited to top tensors
+            // The sentinel for loop termination is n_accesses == 0 (guaranteed at entry [max_tensors])
+            // We also check the i+1 entry for comma separation, but only within array bounds
+            const int32_t max_tensors = 100;
+            for (int32_t i = 0; i < max_tensors && tensor_info[i].n_accesses > 0; ++i) {
+                tensor_line += "" + std::to_string(tensor_info[i].id)
+                             + ": " + std::to_string(tensor_info[i].n_accesses);
+                if (i + 1 < max_tensors && tensor_info[i + 1].n_accesses > 0) {
+                    tensor_line += ", ";
+                }
+            }
+            SLT_INF(*this, "%s\n", tensor_line.c_str());
+
+            // Free the array returned by llama_get_tensor_access_count
+            llama_free_tensor_access_count(tensor_info);
+        }
+
         if (n_draft_total > 0) {
             const float  draft_ratio  = (float) n_draft_accepted / n_draft_total;
             const double mean_acc_len = n_draft_verif_steps > 0 ? 1.0 + (double) n_draft_accepted / (double) n_draft_verif_steps : 1.0;

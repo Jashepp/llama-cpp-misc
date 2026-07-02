@@ -188,7 +188,7 @@ std::unique_ptr<llm_graph_context> llama_model_step35::build_arch_graph(const ll
     return std::make_unique<graph>(*this, params);
 }
 
-llama_model_step35::graph::graph(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
+llama_model_step35::graph::graph(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) { set_model(&model); 
     ggml_tensor * cur;
     ggml_tensor * inpL;
 
@@ -364,7 +364,7 @@ llama_model_step35::graph::graph(const llama_model & model, const llm_graph_para
 
 // LLM_GRAPH_TYPE_DECODER_MTP draft head for Step3p5 (MoE)
 llama_model_step35::graph_mtp::graph_mtp(const llama_model & model, const llm_graph_params & params)
-    : llm_graph_context(params) {
+    : llm_graph_context(params) { set_model(&model); 
     GGML_ASSERT(hparams.n_layer_nextn > 0 && "STEP35 MTP requires n_layer_nextn > 0");
 
     // Multi-block MTP: the DECODER_MTP graph runs the MTP head selected by

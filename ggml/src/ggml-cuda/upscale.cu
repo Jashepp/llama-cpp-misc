@@ -256,8 +256,8 @@ static void upscale_f32_bicubic_cuda(const float * x, float * dst,
 
 void ggml_cuda_op_upscale(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * src0 = dst->src[0];
-    const float * src0_d = (const float *)src0->data;
-    float * dst_d = (float *)dst->data;
+    const float * src0_d = (const float *)GGML_CUDA_NAME_TENSOR(src0->data, src0);
+    float * dst_d = (float *)GGML_CUDA_NAME_TENSOR(dst->data, dst);
     cudaStream_t stream = ctx.stream();
 
     GGML_ASSERT(src0->type == GGML_TYPE_F32);

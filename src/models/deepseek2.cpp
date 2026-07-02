@@ -145,6 +145,7 @@ std::unique_ptr<llm_graph_context> llama_model_deepseek2::build_arch_graph(const
 
 llama_model_deepseek2::graph::graph(const llama_model & model, const llm_graph_params & params) :
     llm_graph_context(params) {
+    set_model(&model);
     // lite variants include DeepSeek-V2-Lite, GigaChat3-10B-A1.8B
     bool is_ocr = model.arch == LLM_ARCH_DEEPSEEK2OCR;
 

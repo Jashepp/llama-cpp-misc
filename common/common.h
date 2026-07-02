@@ -248,6 +248,7 @@ struct common_params_sampling {
     bool    ignore_eos         = false;
     bool    no_perf            = false;  // disable performance metrics
     bool    timing_per_token   = false;
+    bool    tensor_access_stats = false; // enable tensor access counting (for --tensor-access-stats flag)
 
     uint64_t user_sampling_config = 0; // bitfield to track user-specified samplers
 

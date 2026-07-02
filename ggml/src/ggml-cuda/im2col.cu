@@ -78,8 +78,8 @@ static void im2col_cuda_f32(const float * x, float * dst,
 void ggml_cuda_op_im2col(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * src0 = dst->src[0];
     const ggml_tensor * src1 = dst->src[1];
-    const float * src1_d = (const float *)src1->data;
-    float * dst_d = (float *)dst->data;
+    const float * src1_d = (const float *)GGML_CUDA_NAME_TENSOR(src1->data, src1);
+    float * dst_d = (float *)GGML_CUDA_NAME_TENSOR(dst->data, dst);
     cudaStream_t stream = ctx.stream();
 
     GGML_ASSERT(src1->type == GGML_TYPE_F32);
@@ -215,8 +215,8 @@ static void im2col_3d_cuda_f32(const float * src, float * dst,
 void ggml_cuda_op_im2col_3d(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * src0 = dst->src[0];
     const ggml_tensor * src1 = dst->src[1];
-    const float * src1_d = (const float *)src1->data;
-    float * dst_d = (float *)dst->data;
+    const float * src1_d = (const float *)GGML_CUDA_NAME_TENSOR(src1->data, src1);
+    float * dst_d = (float *)GGML_CUDA_NAME_TENSOR(dst->data, dst);
     cudaStream_t stream = ctx.stream();
 
     GGML_ASSERT(src1->type == GGML_TYPE_F32);

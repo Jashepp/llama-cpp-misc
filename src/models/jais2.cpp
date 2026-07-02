@@ -57,7 +57,7 @@ std::unique_ptr<llm_graph_context> llama_model_jais2::build_arch_graph(const llm
 
 // JAIS-2 model graph builder
 // Uses: LayerNorm (not RMSNorm), relu2 activation, separate Q/K/V, RoPE embeddings
-llama_model_jais2::graph::graph(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
+llama_model_jais2::graph::graph(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) { set_model(&model); 
     const int64_t n_embd_head = hparams.n_embd_head_v();
 
     GGML_ASSERT(n_embd_head == hparams.n_embd_head_k());

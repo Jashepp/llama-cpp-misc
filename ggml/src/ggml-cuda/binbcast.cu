@@ -431,23 +431,23 @@ static void ggml_cuda_op_bin_bcast(
 }
 
 void ggml_cuda_op_repeat(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
-    ggml_cuda_op_bin_bcast<bin_bcast_cuda<op_repeat, 0>>(dst, dst->src[0], dst, nullptr, dst->src[0]->data, dst->data, ctx.stream());
+    ggml_cuda_op_bin_bcast<bin_bcast_cuda<op_repeat, 0>>(dst, dst->src[0], dst, nullptr, GGML_CUDA_NAME_TENSOR(dst->src[0]->data, dst->src[0]), GGML_CUDA_NAME_TENSOR(dst->data, dst), ctx.stream());
 }
 
 void ggml_cuda_op_add(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
-    ggml_cuda_op_bin_bcast<bin_bcast_cuda<op_add>>(dst->src[0], dst->src[1], dst, dst->src[0]->data, dst->src[1]->data, dst->data, ctx.stream());
+    ggml_cuda_op_bin_bcast<bin_bcast_cuda<op_add>>(dst->src[0], dst->src[1], dst, GGML_CUDA_NAME_TENSOR(dst->src[0]->data, dst->src[0]), GGML_CUDA_NAME_TENSOR(dst->src[1]->data, dst->src[1]), GGML_CUDA_NAME_TENSOR(dst->data, dst), ctx.stream());
 }
 
 void ggml_cuda_op_sub(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
-    ggml_cuda_op_bin_bcast<bin_bcast_cuda<op_sub>>(dst->src[0], dst->src[1], dst, dst->src[0]->data, dst->src[1]->data, dst->data, ctx.stream());
+    ggml_cuda_op_bin_bcast<bin_bcast_cuda<op_sub>>(dst->src[0], dst->src[1], dst, GGML_CUDA_NAME_TENSOR(dst->src[0]->data, dst->src[0]), GGML_CUDA_NAME_TENSOR(dst->src[1]->data, dst->src[1]), GGML_CUDA_NAME_TENSOR(dst->data, dst), ctx.stream());
 }
 
 void ggml_cuda_op_mul(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
-    ggml_cuda_op_bin_bcast<bin_bcast_cuda<op_mul>>(dst->src[0], dst->src[1], dst, dst->src[0]->data, dst->src[1]->data, dst->data, ctx.stream());
+    ggml_cuda_op_bin_bcast<bin_bcast_cuda<op_mul>>(dst->src[0], dst->src[1], dst, GGML_CUDA_NAME_TENSOR(dst->src[0]->data, dst->src[0]), GGML_CUDA_NAME_TENSOR(dst->src[1]->data, dst->src[1]), GGML_CUDA_NAME_TENSOR(dst->data, dst), ctx.stream());
 }
 
 void ggml_cuda_op_div(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
-    ggml_cuda_op_bin_bcast<bin_bcast_cuda<op_div>>(dst->src[0], dst->src[1], dst, dst->src[0]->data, dst->src[1]->data, dst->data, ctx.stream());
+    ggml_cuda_op_bin_bcast<bin_bcast_cuda<op_div>>(dst->src[0], dst->src[1], dst, GGML_CUDA_NAME_TENSOR(dst->src[0]->data, dst->src[0]), GGML_CUDA_NAME_TENSOR(dst->src[1]->data, dst->src[1]), GGML_CUDA_NAME_TENSOR(dst->data, dst), ctx.stream());
 }
 
 template <float (*op)(const float, const float), int n_fuse>
@@ -459,19 +459,19 @@ static void ggml_cuda_op_fused_binbcast_impl(ggml_backend_cuda_context & ctx, gg
 
     if (src0->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32) {
         launch_bin_bcast_pack<op, float, float, float>(src0, src1, dst,
-            (const float *) src0->data, (const float *) src1->data, (float *) dst->data,
+            (const float *) GGML_CUDA_NAME_TENSOR(src0->data, src0), (const float *) GGML_CUDA_NAME_TENSOR(src1->data, src1), (float *) GGML_CUDA_NAME_TENSOR(dst->data, dst),
             stream, std::make_index_sequence<n_fuse>{});
     } else if (src0->type == GGML_TYPE_F16 && src1->type == GGML_TYPE_F16 && dst->type == GGML_TYPE_F16) {
         launch_bin_bcast_pack<op, half, half, half>(src0, src1, dst,
-            (const half *) src0->data, (const half *) src1->data, (half *) dst->data,
+            (const half *) GGML_CUDA_NAME_TENSOR(src0->data, src0), (const half *) GGML_CUDA_NAME_TENSOR(src1->data, src1), (half *) GGML_CUDA_NAME_TENSOR(dst->data, dst),
             stream, std::make_index_sequence<n_fuse>{});
     } else if (src0->type == GGML_TYPE_F16 && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F16) {
         launch_bin_bcast_pack<op, half, float, half>(src0, src1, dst,
-            (const half *) src0->data, (const float *) src1->data, (half *) dst->data,
+            (const half *) GGML_CUDA_NAME_TENSOR(src0->data, src0), (const float *) GGML_CUDA_NAME_TENSOR(src1->data, src1), (half *) GGML_CUDA_NAME_TENSOR(dst->data, dst),
             stream, std::make_index_sequence<n_fuse>{});
     } else if (src0->type == GGML_TYPE_F16 && dst->type == GGML_TYPE_F32) {
         launch_bin_bcast_pack<op, half, float, float>(src0, src1, dst,
-            (const half *) src0->data, (const float *) src1->data, (float *) dst->data,
+            (const half *) GGML_CUDA_NAME_TENSOR(src0->data, src0), (const float *) GGML_CUDA_NAME_TENSOR(src1->data, src1), (float *) GGML_CUDA_NAME_TENSOR(dst->data, dst),
             stream, std::make_index_sequence<n_fuse>{});
     } else {
         fprintf(stderr,
@@ -563,8 +563,8 @@ void ggml_cuda_op_repeat_back(ggml_backend_cuda_context & ctx, ggml_tensor * dst
 
     switch (dst->type) {
         case GGML_TYPE_F32: {
-            const float * src0_d = (const float *) src0->data;
-            float       * dst_d  = (float       *) dst->data;
+            const float * src0_d = (const float *) GGML_CUDA_NAME_TENSOR(src0->data, src0);
+            float       * dst_d  = (float       *) GGML_CUDA_NAME_TENSOR(dst->data, dst);
             repeat_back_cuda(src0_d, dst_d, ne00, ne01, ne02, ne03, s00, s01, s02, s03, ne0, ne1, ne2, ne3, stream);
         } break;
         default: {

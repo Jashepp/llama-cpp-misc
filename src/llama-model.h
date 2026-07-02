@@ -614,6 +614,12 @@ struct llama_model {
     // gguf metadata
     std::unordered_map<std::string, std::string> gguf_kv;
 
+    // Tensor access counting: tensor name -> gguf tensor index mapping
+    std::unordered_map<std::string, int32_t> tensor_id_map;
+
+    // Tensor access counting: data pointer -> gguf tensor index mapping (for CUDA tensor name resolution)
+    std::unordered_map<void *, int32_t> data_addr_to_gguf_tensor_map;
+
     // list of devices used in this model
     std::vector<llama_device> devices;
 
@@ -660,6 +666,9 @@ struct llama_model {
     bool has_tensor_overrides() const;
 
     const struct ggml_tensor * get_tensor(const char * name) const;
+
+    // Tensor access counting: data pointer -> gguf tensor index mapping
+    const std::unordered_map<void *, int32_t> & get_data_addr_to_gguf_tensor_map() const;
 
     float get_rope_freq_base (const llama_cparams & cparams, int il) const;
     float get_rope_freq_scale(const llama_cparams & cparams, int il) const;

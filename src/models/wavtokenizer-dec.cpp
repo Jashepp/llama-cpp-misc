@@ -115,7 +115,7 @@ std::unique_ptr<llm_graph_context> llama_model_wavtokenizer_dec::build_arch_grap
     return std::make_unique<graph>(*this, params);
 }
 
-llama_model_wavtokenizer_dec::graph::graph(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
+llama_model_wavtokenizer_dec::graph::graph(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) { set_model(&model); 
     ggml_tensor * cur;
     ggml_tensor * inpL;
 

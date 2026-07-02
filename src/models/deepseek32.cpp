@@ -158,6 +158,7 @@ std::unique_ptr<llm_graph_context> llama_model_deepseek32::build_arch_graph(cons
 
 llama_model_deepseek32::graph::graph(const llama_model & model, const llm_graph_params & params) :
     llm_graph_context(params) {
+    set_model(&model);
     const bool is_mla = hparams.is_mla();
     GGML_ASSERT(is_mla);
 

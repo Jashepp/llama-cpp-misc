@@ -142,9 +142,9 @@ static __global__ void __launch_bounds__(CUDA_CONCAT_BLOCK_SIZE)
 template <typename T>
 static void concat_cuda(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, int dim, cudaStream_t stream) {
     if (ggml_is_contiguous(src0) && ggml_is_contiguous(src1)) {
-        const T * src0_d = (const T *) src0->data;
-        const T * src1_d = (const T *) src1->data;
-        T *       dst_d  = (T *) dst->data;
+        const T * src0_d = (const T *) GGML_CUDA_NAME_TENSOR(src0->data, src0);
+        const T * src1_d = (const T *) GGML_CUDA_NAME_TENSOR(src1->data, src1);
+        T *       dst_d  = (T *) GGML_CUDA_NAME_TENSOR(dst->data, dst);
 
         if (dim != 3) {
             for (int64_t i3 = 0; i3 < dst->ne[3]; i3++) {
@@ -159,14 +159,20 @@ static void concat_cuda(const ggml_tensor * src0, const ggml_tensor * src1, ggml
             const size_t size0 = ggml_nbytes(src0);
             const size_t size1 = ggml_nbytes(src1);
 
-            CUDA_CHECK(cudaMemcpyAsync((char *) dst->data,         src0->data, size0, cudaMemcpyDeviceToDevice, stream));
-            CUDA_CHECK(cudaMemcpyAsync((char *) dst->data + size0, src1->data, size1, cudaMemcpyDeviceToDevice, stream));
+            const void * src0_data = GGML_CUDA_NAME_TENSOR(src0->data, src0);
+            const void * src1_data = GGML_CUDA_NAME_TENSOR(src1->data, src1);
+            void * dst_data = GGML_CUDA_NAME_TENSOR(dst->data, dst);
+            CUDA_CHECK(cudaMemcpyAsync((char *) dst_data,         src0_data, size0, cudaMemcpyDeviceToDevice, stream));
+            CUDA_CHECK(cudaMemcpyAsync((char *) dst_data + size0, src1_data, size1, cudaMemcpyDeviceToDevice, stream));
         }
     } else {
         dim3 grid_dim(dst->ne[1], dst->ne[2], dst->ne[3]);
+        const void * src0_data = GGML_CUDA_NAME_TENSOR(src0->data, src0);
+        const void * src1_data = GGML_CUDA_NAME_TENSOR(src1->data, src1);
+        void * dst_data = GGML_CUDA_NAME_TENSOR(dst->data, dst);
         auto launch_kernel = [&](auto dim) {
             concat_non_cont<T, dim><<<grid_dim, CUDA_CONCAT_BLOCK_SIZE, 0, stream>>>(
-                (const char *) src0->data, (const char *) src1->data, (char *) dst->data,
+                (const char *) src0_data, (const char *) src1_data, (char *) dst_data,
                 src0->ne[0], src0->ne[1], src0->ne[2], src0->ne[3],
                 src0->nb[0], src0->nb[1], src0->nb[2], src0->nb[3],
                 src1->ne[0], src1->ne[1], src1->ne[2], src1->ne[3],

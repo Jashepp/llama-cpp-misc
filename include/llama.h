@@ -392,6 +392,9 @@ extern "C" {
         // a source/target/parent context
         // can be utilized in various ways, for example by sharing results or llama_memory between 2 contexts
         struct llama_context * ctx_other;
+
+        // Enable tensor access counting during graph_compute. Populates tensor_access_map and tensor_id_access_count.
+        bool tensor_access_stats;
     };
 
     struct llama_model_tensor_override {
@@ -1548,6 +1551,24 @@ extern "C" {
     LLAMA_API struct llama_perf_sampler_data llama_perf_sampler      (const struct llama_sampler * chain);
     LLAMA_API void                           llama_perf_sampler_print(const struct llama_sampler * chain);
     LLAMA_API void                           llama_perf_sampler_reset(      struct llama_sampler * chain);
+
+    //
+    // Tensor access counting
+    //
+
+    // Structure for tensor access information (gguf tensor_id + access count)
+    struct llama_tensor_access_info {
+        int32_t id;                          // gguf tensor index (e.g., 0, 1, 25, 26)
+        int32_t n_accesses;                  // number of src appearances in graph nodes
+    };
+
+    LLAMA_API const struct llama_tensor_access_info * llama_get_tensor_access_count(const struct llama_context * ctx);
+
+    // Free the tensor access info array returned by llama_get_tensor_access_count().
+    LLAMA_API void llama_free_tensor_access_count(const struct llama_tensor_access_info * info);
+
+    // Reset the tensor access counter for the next prompt.
+    LLAMA_API void llama_reset_tensor_access_count(struct llama_context * ctx);
 
     //
     // training

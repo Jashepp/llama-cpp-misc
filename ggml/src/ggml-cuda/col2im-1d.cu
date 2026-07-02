@@ -62,17 +62,17 @@ void ggml_cuda_op_col2im_1d(ggml_backend_cuda_context & ctx, ggml_tensor * dst) 
     switch (src0->type) {
         case GGML_TYPE_F32: {
             col2im_1d_kernel<<<num_blocks, block_size, 0, stream>>>(
-                (const float *)src0->data, (float *)dst->data,
+                (const float *)GGML_CUDA_NAME_TENSOR(src0->data, src0), (float *)GGML_CUDA_NAME_TENSOR(dst->data, dst),
                 T_in, T_out_fd, OC, K, K_OC, s0, p0, total);
         } break;
         case GGML_TYPE_F16: {
             col2im_1d_kernel<<<num_blocks, block_size, 0, stream>>>(
-                (const half *)src0->data, (half *)dst->data,
+                (const half *)GGML_CUDA_NAME_TENSOR(src0->data, src0), (half *)GGML_CUDA_NAME_TENSOR(dst->data, dst),
                 T_in, T_out_fd, OC, K, K_OC, s0, p0, total);
         } break;
         case GGML_TYPE_BF16: {
             col2im_1d_kernel<<<num_blocks, block_size, 0, stream>>>(
-                (const nv_bfloat16 *)src0->data, (nv_bfloat16 *)dst->data,
+                (const nv_bfloat16 *)GGML_CUDA_NAME_TENSOR(src0->data, src0), (nv_bfloat16 *)GGML_CUDA_NAME_TENSOR(dst->data, dst),
                 T_in, T_out_fd, OC, K, K_OC, s0, p0, total);
         } break;
         default:

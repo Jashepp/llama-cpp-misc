@@ -24,7 +24,7 @@ void ggml_cuda_op_set(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     }
 
     ggml_tensor dst_view = *dst;
-    dst_view.data  = (void *)((char *)dst->data + offset);
+    dst_view.data  = (void *)((char *)GGML_CUDA_NAME_TENSOR(dst->data, dst) + offset);
     dst_view.ne[0] = src1->ne[0];
     dst_view.ne[1] = src1->ne[1];
     dst_view.ne[2] = src1->ne[2];

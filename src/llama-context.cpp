@@ -12,6 +12,8 @@
 #include "llama-ext.h"
 #include "llama.h"
 
+#include <algorithm>
+#include <string>
 #include <cinttypes>
 #include <cmath>
 #include <cstring>
@@ -43,6 +45,9 @@ llama_context::llama_context(
 
     t_start_us = model.t_start_us;
     t_load_us  = model.t_load_us;
+
+    // Initialize tensor access tracking flag from params
+    tensor_access_stats_enabled = params.tensor_access_stats;
 
     const auto & hparams = model.hparams;
 
@@ -1368,6 +1373,214 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
         return nullptr;
     }
 
+    // Tensor access counting: count src tensor appearances per graph_compute cycle
+    // A tensor is counted ONCE per node that reads from it (not deduplicated)
+    // This reflects actual usage: if 512 nodes read from the same KV cache tensor, it counts 512 accesses
+    if (tensor_access_stats_enabled && res) {
+        ggml_cgraph * gf = res->get_gf();
+        DIAG_INF("  [TENSOR_ACCESS] Starting graph_compute tensor counting — nodes=%d, tensor_access_map.size=%zu\n",
+                ggml_graph_n_nodes(gf),
+                res->tensor_access_map.size());
+
+        // Count tensor access count per graph_compute cycle (no dedup)
+        for (int i = 0; i < ggml_graph_n_nodes(gf); ++i) {
+            ggml_tensor * node = ggml_graph_node(gf, i);
+            if (node == nullptr) {
+                continue;
+            }
+            for (int j = 0; j < GGML_MAX_SRC; ++j) {
+                ggml_tensor * src = node->src[j];
+                if (src == nullptr) {
+                    continue;
+                }
+
+                const char * src_name = ggml_get_name(src);
+                DIAG_DBG("  [TENSOR_ACCESS] node[%d] src[%d] = %p name=%s typ=%d\n", i, j, (void *)src, src_name ? src_name : "(NULL)", (int)src->type);
+
+                // Count every src tensor access (no dedup)
+                DIAG_INF("  INCREMENT: tensor_access_count[src=%p]++ = %d (tensor=%s)\n", (void *)src, tensor_access_count[src], src_name ? src_name : "(NULL)");
+                tensor_access_count[src]++;
+
+                // Convert ggml_tensor* to GGUF tensor index
+                // Method 1: Use res->tensor_access_map (populated during graph build via llm_graph_context::cb).
+                // This contains ALL GGUF weight tensors — populated by cb Method 3 (src tensor lookup).
+                // cb Method 3 iterates through cur->src[0], cur->src[1], etc. during graph_build
+                // and looks up each via ggml_get_name() + model_tensor_id_map, storing in tensor_access_map.
+                // So when we look up src here, it WILL be in tensor_access_map.
+                //
+                // CRITICAL FIX: Use `res` (the ACTUAL result returned from process_ubatch) as the key
+                // for tensor_access_map, not gf_res_prev. This matters because:
+                // - If graph_reuse is disabled, process_ubatch may use gf_res_reserve instead of gf_res_prev
+                // - The tensor_access_map is populated on whichever res was used during graph_build
+                // - Using the wrong res would miss tensor_access_map entries and return -1
+                int32_t tensor_id = -1;
+
+                // DIAG: Print res and tensor_access_map status
+                DIAG_DBG("  [TENSOR_ACCESS] Method 1: res=%p, res->tensor_access_map.empty()=%s, map.size=%zu\n",
+                        (void *)res,
+                        res ? (res->tensor_access_map.empty() ? "YES" : "NO") : "N/A",
+                        res ? res->tensor_access_map.size() : 0);
+
+                if (res) {
+                    // res is the result from process_ubatch (could be gf_res_prev or gf_res_reserve)
+                    // It was populated during the graph_build that created this graph
+                    // CRITICAL FIX: When res->tensor_access_map is empty or doesn't contain src,
+                    // fall back to trying gf_res_reserve->tensor_access_map since the graph building
+                    // might have used gf_res_reserve instead of gf_res_prev.
+                    // We also check other graph results by iterating through gf_res_prev->gf (if different)
+                    bool found = false;
+                    auto it = res->tensor_access_map.find(src);
+                    if (it != res->tensor_access_map.end()) {
+                        tensor_id = it->second;
+                        found = true;
+                        DIAG_INF("  Method 1 FOUND by ggml_tensor*: tensor_access_map[src=%p] = %d (name=%s)\n",
+                                (void *)src, tensor_id, src_name ? src_name : "(NULL)");
+                    } else {
+                        DIAG_DBG("  Method 1 NOT FOUND: tensor_access_map.find(src=%p)\n", (void *)src);
+                        // Additional diagnostic: check if another result object has this tensor
+                        // If tensor_access_map is empty, the graph might have been built with a different res
+                        if (res->tensor_access_map.empty()) {
+                            DIAG_DBG("  Method 1 EMPTY MAP: tensor_access_map is empty, checking gf_res_reserve\n");
+                            // Try gf_res_reserve->tensor_access_map as secondary lookup
+                            const auto * gf_res_reserve = get_gf_res_reserve();
+                            if (gf_res_reserve && gf_res_reserve->tensor_access_map.find(src) != gf_res_reserve->tensor_access_map.end()) {
+                                tensor_id = gf_res_reserve->tensor_access_map.find(src)->second;
+                                found = true;
+                                DIAG_INF("  Method 1 FALLBACK via gf_res_reserve: tensor_access_map[src=%p] = %d (name=%s)\n",
+                                        (void *)src, tensor_id, src_name ? src_name : "(NULL)");
+                            }
+                        }
+                        // Print all keys in tensor_access_map for debugging why this src isn't found
+                        if (res && i < 5 && !found) { // Only print for first few nodes to avoid spam
+                            DIAG_DBG("    Available keys (first 20):\n");
+                            int count = 0;
+                            for (const auto & pair : res->tensor_access_map) {
+                                if (count >= 20) break;
+                                const char * kname = ggml_get_name((const ggml_tensor *)pair.first);
+                                DIAG_DBG("      src=%p name=%s id=%d\n",
+                                        (void *)pair.first, kname ? kname : "(NULL)", pair.second);
+                                count++;
+                            }
+                        }
+                    }
+
+                    // CRITICAL FIX: Always try model's data_addr_to_gguf_tensor_map when Method 1 pointer lookup fails.
+                    // The same GGUF weight tensor can appear as different ggml_tensor* pointers across phases.
+                    // Name-based methods (Method 2/2c) are NOT robust enough for pointer aliasing.
+                    // Data-address mapping is THE LAST RESORT — try it BEFORE falling through to suffix stripping.
+                    if (!found && i < 50) {
+                        DIAG_DBG("  Method 1 DATA_ADDR fallback: map.size=%zu, checking data_addr_map\n", res->tensor_access_map.size());
+                        // Try model's data_addr_to_gguf_tensor_map to map src data pointer → GGUF tensor index
+                        void * data_addr = src->data;
+                        // FIX: Remove tensor_access_map.empty() check — always try data_addr_map after pointer lookup fails
+                        if (data_addr && res) {
+                            const std::unordered_map<void *, int32_t> & data_addr_map = model.data_addr_to_gguf_tensor_map;
+                            auto it2 = data_addr_map.find(data_addr);
+                            if (it2 != data_addr_map.end()) {
+                                tensor_id = it2->second;
+                                found = true;
+                                DIAG_INF("  Method 1 DATA_ADDR fallback: src->data=%p → tensor_id=%d (name=%s)\n",
+                                            (void *)data_addr, tensor_id,
+                                            ggml_get_name(src) ? ggml_get_name(src) : "(NULL)");
+                            } else {
+                                DIAG_DBG("  Method 1 DATA_ADDR fallback: src->data=%p NOT FOUND in data_addr_map\n",
+                                            (void *)data_addr);
+                            }
+                        } else {
+                            DIAG_DBG("  Method 1 DATA_ADDR fallback SKIP: data_addr=%p res=%p\n", (void *)data_addr, (void *)res);
+                        }
+                    }
+                }
+
+                // NEW DIAG: Log ggml_get_data(src) vs src->data for this tensor to identify zeroed data issue
+                void * ggml_data = (void *)ggml_get_data(src);
+                DIAG_DBG("  [TENSOR_ACCESS] GGML_DATA DIAG: src=%p src->data=%p ggml_get_data(src)=%p name=%s\n",
+                        (void *)src, (void *)src->data, ggml_data, src_name ? src_name : "(NULL)");
+
+                // Method 2a: Fallback using model->tensor_id_map (GGUF tensor name → GGUF index)
+                // This catches tensors whose name exists in the GGUF metadata but weren't
+                // captured by cb() during graph build (edge cases: tensors loaded but not used in graph, etc.)
+                // NOTE: Only tried after data-address fallback fails (now on line ~1468)
+                if (tensor_id < 0) {
+                    DIAG_DBG("  Method 2: model->tensor_id_map.empty()=%s, src->data=%p\n",
+                            model.tensor_id_map.empty() ? "YES" : "NO",
+                            (void *)src->data);
+                    const char * name = ggml_get_name(src);
+                    if (name && !model.tensor_id_map.empty()) {
+                        auto it = model.tensor_id_map.find(name);
+                        if (it != model.tensor_id_map.end()) {
+                            tensor_id = it->second;
+                        } else {
+                            DIAG_DBG("  Method 2 NOT FOUND: tensor_id_map.find('%s')\n", name);
+                            // CRITICAL FIX: If name-based lookup fails, try suffix stripping for CUDA tensors.
+                            // CUDA tensor names may have suffixes like "CUDA0#blk.0.attn_q#0" where the GGUF name
+                            // is just "blk.0.attn_q". Strip the prefix and suffix to find the bare name.
+                            if (i < 50) {
+                                // Try suffix stripping: find last "#N" pattern and strip it
+                                std::string bare_name(name);
+                                const size_t hash_pos = bare_name.rfind('#');
+                                if (hash_pos != std::string::npos && hash_pos + 1 < bare_name.size()) {
+                                    const std::string suffix = bare_name.substr(hash_pos + 1);
+                                    bool is_numeric_suffix = !suffix.empty() && std::all_of(suffix.begin(), suffix.end(), ::isdigit);
+                                    if (is_numeric_suffix) {
+                                        bare_name = bare_name.substr(0, hash_pos);
+                                        DIAG_DBG("  Method 2 SUFFIX_STRIP from '%s' to '%s'\n", name, bare_name.c_str());
+                                        // Try matching the bare name
+                                        const size_t bare_len = bare_name.length();
+                                        if (bare_len > 0 && bare_name.find('#') != std::string::npos) {
+                                            // Also try stripping CUDA prefix: "CUDA0#name#0" -> "name"
+                                            const size_t cuda_pos = bare_name.rfind("CUDA");
+                                            if (cuda_pos != std::string::npos) {
+                                                std::string cuda_stripped = bare_name.substr(cuda_pos + 4);
+                                                const size_t cuda_hash = cuda_stripped.rfind('#');
+                                                if (cuda_hash != std::string::npos) {
+                                                    cuda_stripped = cuda_stripped.substr(0, cuda_hash);
+                                                    DIAG_DBG("  Method 2 CUDA_STRIP from '%s' to '%s'\n", bare_name.c_str(), cuda_stripped.c_str());
+                                                    auto it2 = model.tensor_id_map.find(cuda_stripped);
+                                                    if (it2 != model.tensor_id_map.end()) {
+                                                        tensor_id = it2->second;
+                                                        DIAG_INF("  Method 2 CUDA_STRIP FOUND: '%s' -> id=%d\n", cuda_stripped, tensor_id);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        // Try bare name
+                                        auto it2 = model.tensor_id_map.find(bare_name);
+                                        if (it2 != model.tensor_id_map.end()) {
+                                            tensor_id = it2->second;
+                                            DIAG_INF("  Method 2 SUFFIX_STRIP FOUND: '%s' -> id=%d\n", bare_name, tensor_id);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        DIAG_DBG("  Method 2 SKIP: name=%s, model.tensor_id_map.empty()=%s\n",
+                                name ? name : "(NULL)",
+                                model.tensor_id_map.empty() ? "YES" : "NO");
+                    }
+                }
+
+                DIAG_DBG("  [TENSOR_ACCESS] FINAL: src=%p name=%s tensor_id=%d (access_count=%d)\n",
+                        (void *)src, src_name ? src_name : "(NULL)", tensor_id, tensor_access_count[src]);
+
+                tensor_id_access_count[tensor_id] += 1;
+            }
+        }
+
+        // Summary: Show how many tensors ended up with -1 as their ID
+        int tensors_with_minus_1 = 0;
+        for (const auto & pair : tensor_id_access_count) {
+            if (pair.first == -1 && pair.second > 0) {
+                tensors_with_minus_1 += pair.second;
+            }
+        }
+        DIAG_INF("  [TENSOR_ACCESS] SUMMARY: total accesses with -1 ID = %d out of total accesses\n", tensors_with_minus_1);
+
+        // Clear the -1 key to prevent unbounded growth across inference cycles
+        tensor_id_access_count.erase(-1);
+    }
+
     ret = GGML_STATUS_SUCCESS;
 
     return res;
@@ -2336,7 +2549,27 @@ uint32_t llama_context::graph_max_nodes(uint32_t n_tokens) const {
 }
 
 llm_graph_result * llama_context::get_gf_res_reserve() const {
-    return static_cast<llm_graph_result *>(gf_res_reserve.get());
+    return gf_res_reserve.get();
+}
+
+llm_graph_result * llama_context::get_gf_res_prev() const {
+    return gf_res_prev.get();
+}
+
+llm_graph_result * llama_context::get_gf_res_current() const {
+    // Returns the currently active graph result.
+    // In process_ubatch, if graph_reuse is enabled, gf_res_prev is reused — that IS the current res.
+    // If graph_reuse is disabled, gf_res_reserve is used — THAT IS the current res.
+    // We determine which one was actually used by looking at which one has gf != nullptr (was used in process_ubatch).
+    // But for the tensor_access_map lookup, we want the res whose tensor_access_map is valid.
+    // 
+    // CRITICAL: Since process_ubatch always uses gf_res_prev (it retrieves it at line "auto * res = gf_res_prev.get()"),
+    // and tensor_access_map is populated during graph_build which modifies gf_res_prev, gf_res_prev IS the current res.
+    // However, if graph_reuse_disable is set, gf_res_reserve gets used instead.
+    if (graph_reuse_disable) {
+        return gf_res_reserve.get();
+    }
+    return gf_res_prev.get();
 }
 
 ggml_cgraph * llama_context::graph_reserve(
@@ -2419,6 +2652,8 @@ llm_graph_params llama_context::graph_params(
         /*.n_outputs   =*/ n_outputs,
         /*.cb          =*/ graph_get_cb(),
         /*.res         =*/ res,
+        /*.model_tensor_id_map =*/ &model.tensor_id_map,
+        /*.model_data_addr_map =*/ &model.data_addr_to_gguf_tensor_map,
     };
 }
 
@@ -2447,6 +2682,10 @@ ggml_status llama_context::graph_compute(
     }
 
     // fprintf(stderr, "splits: %d\n", ggml_backend_sched_get_n_splits(sched));
+
+    if (status != GGML_STATUS_SUCCESS) {
+        return status;
+    }
 
     return status;
 }
@@ -3198,6 +3437,10 @@ void llama_context::perf_reset() {
     t_eval_us   = n_eval = 0;
     t_p_eval_us = n_p_eval = 0;
     n_reused    = 0;
+
+    // Reset tensor access counts
+    tensor_access_count.clear();
+    tensor_id_access_count.clear();
 }
 
 llama_memory_breakdown llama_context::memory_breakdown() const {
@@ -3486,6 +3729,7 @@ llama_context_params llama_context_default_params() {
         /*.sampler                     =*/ nullptr,
         /*.n_sampler                   =*/ 0,
         /*.ctx_other                   =*/ nullptr,
+        /*.tensor_access_stats         =*/ false,
     };
 
     return result;
@@ -4094,10 +4338,188 @@ void llama_perf_context_print(const llama_context * ctx) {
             __func__, data.t_eval_ms, data.n_eval, data.t_eval_ms / data.n_eval, 1e3 / data.t_eval_ms * data.n_eval);
     LLAMA_LOG_INFO("%s:       total time = %10.2f ms / %5d tokens\n", __func__, (t_end_ms - data.t_start_ms), (data.n_p_eval + data.n_eval));
     LLAMA_LOG_INFO("%s:    graphs reused = %10d\n", __func__, data.n_reused);
+
+    // Tensor access stats (if enabled)
+    // The tensor_id_access_count is populated during graph_compute via the cached tensor_access_map
+    // Sometimes this may be empty if the graph wasn't computed with tensor_access_stats_enabled
+    // In that case, we fall back to the original method (looking up by name during print)
+    if (ctx->tensor_access_stats_enabled && !ctx->tensor_access_count.empty()) {
+        // Use post-processed tensor_id_access_count (if available)
+        if (!ctx->tensor_id_access_count.empty()) {
+            std::string tensor_line = "tensors accessed: ";
+            
+            // Show tensors with at least 1 access, sorted by count descending
+            std::vector<std::pair<int32_t, int32_t>> sorted_tensor_id_access;
+            for (const auto & pair : ctx->tensor_id_access_count) {
+                if (pair.second > 0) {
+                    sorted_tensor_id_access.push_back(pair);
+                }
+            }
+            std::sort(sorted_tensor_id_access.begin(), sorted_tensor_id_access.end(),
+                [](const std::pair<int32_t, int32_t> & a, const std::pair<int32_t, int32_t> & b) {
+                    return a.second > b.second;
+                });
+
+            // Limit to top 100 most accessed tensors
+            const size_t max_tensors = 100;
+            const size_t num_tensors = std::min((size_t)sorted_tensor_id_access.size(), max_tensors);
+
+            for (size_t i = 0; i < num_tensors; ++i) {
+                tensor_line += "" + std::to_string(sorted_tensor_id_access[i].first)
+                             + ": " + std::to_string(sorted_tensor_id_access[i].second);
+                if (i < num_tensors - 1) {
+                    tensor_line += ", ";
+                }
+            }
+            LLAMA_LOG_INFO("%s: %s\n", __func__, tensor_line.c_str());
+        } else {
+            // Fallback: tensor_id_access_count may be cleared by llama_perf_context_reset()
+            // Use original method (looking up by name during print)
+            const llama_model * model = llama_get_model(ctx);
+
+            std::string tensor_line = "tensors accessed: ";
+            
+            std::vector<std::pair<ggml_tensor*, int32_t>> sorted_access;
+            for (const auto & pair : ctx->tensor_access_count) {
+                if (pair.second > 0) {
+                    sorted_access.push_back(pair);
+                }
+            }
+            std::sort(sorted_access.begin(), sorted_access.end(),
+                [](const std::pair<ggml_tensor*, int32_t> & a, const std::pair<ggml_tensor*, int32_t> & b) {
+                    return a.second > b.second;
+                });
+
+            const size_t max_tensors = 100;
+            const size_t num_tensors = std::min((size_t)sorted_access.size(), max_tensors);
+
+            for (size_t i = 0; i < num_tensors; ++i) {
+                ggml_tensor * tensor = sorted_access[i].first;
+
+                int32_t tensor_id = -1;
+                const char * name = ggml_get_name(tensor);
+                if (name && model) {
+                    auto it = model->tensor_id_map.find(name);
+                    if (it != model->tensor_id_map.end()) {
+                        tensor_id = it->second;
+                    }
+                }
+
+                tensor_line += "" + std::to_string(tensor_id)
+                             + ": " + std::to_string(sorted_access[i].second);
+                if (i < num_tensors - 1) {
+                    tensor_line += ", ";
+                }
+            }
+            LLAMA_LOG_INFO("%s: %s\n", __func__, tensor_line.c_str());
+        }
+        // Always clear tensor_id_access_count after use
+        ctx->tensor_id_access_count.clear();
+    }
 }
+
+//
+// tensor access counting
+//
 
 void llama_perf_context_reset(llama_context * ctx) {
     ctx->perf_reset();
+}
+
+// llama API for tensor access counting
+
+const struct llama_tensor_access_info * llama_get_tensor_access_count(const struct llama_context * ctx) {
+    if (!ctx || !ctx->tensor_access_stats_enabled) {
+        return nullptr;
+    }
+
+    // For the ctx_other environment, skip (separate context handles its own)
+    if (llama_get_ctx_other(const_cast<struct llama_context *>(ctx)) != nullptr) {
+        return nullptr;
+    }
+
+    // Build aggregated layer access counts from tensor_access_count
+    // Parse "blk.N." from tensor names to extract layer number, then sum counts per layer.
+    // This aggregates individual tensor accesses (e.g., attn_q, attn_k, attn_v, ffn_up, ffn_down)
+    // into per-layer totals, making the output meaningful for identifying hot layers.
+    std::map<int32_t, int32_t> layer_access_counts;
+    for (const auto & pair : ctx->tensor_access_count) {
+        if (pair.second <= 0) {
+            continue;
+        }
+        const char * name = ggml_get_name(pair.first);
+        if (!name) {
+            continue;
+        }
+        // Parse "blk.N." pattern to extract layer number
+        const char * blk_pos = strstr(name, "blk.");
+        if (!blk_pos) {
+            continue;
+        }
+        const char * dot_after = strchr(blk_pos + 4, '.');
+        if (!dot_after) {
+            continue;
+        }
+        // Extract digits between "blk." and the next "."
+        int32_t layer_num = 0;
+        const char * p = blk_pos + 4;
+        bool has_digits = false;
+        while (p < dot_after) {
+            if (*p >= '0' && *p <= '9') {
+                layer_num = layer_num * 10 + (*p - '0');
+                has_digits = true;
+            } else {
+                break;
+            }
+            ++p;
+        }
+        if (!has_digits) {
+            continue;
+        }
+        layer_access_counts[layer_num] += pair.second;
+    }
+
+    // Sort layers by aggregated count descending
+    std::vector<std::pair<int32_t, int32_t>> sorted_layers(
+        layer_access_counts.begin(), layer_access_counts.end());
+    std::sort(sorted_layers.begin(), sorted_layers.end(),
+        [](const std::pair<int32_t, int32_t> & a, const std::pair<int32_t, int32_t> & b) {
+            if (a.second != b.second) {
+                return a.second > b.second;
+            }
+            return a.first < b.first;
+        });
+
+    // Limit to top 100 most accessed layers
+    const size_t max_layers = 100;
+    const size_t num_layers = std::min(sorted_layers.size(), max_layers);
+
+    // Heap-allocate result array so caller can free it
+    auto * heap_result = new struct llama_tensor_access_info[max_layers];
+
+    for (size_t i = 0; i < num_layers; ++i) {
+        heap_result[i].id = sorted_layers[i].first;
+        heap_result[i].n_accesses = sorted_layers[i].second;
+    }
+
+    // CRITICAL FIX: zero out entries beyond num_layers so the sentinel loop works
+    for (size_t i = num_layers; i < max_layers; ++i) {
+        heap_result[i].n_accesses = 0;
+        heap_result[i].id = -1;
+    }
+
+    return heap_result;
+}
+
+void llama_free_tensor_access_count(const struct llama_tensor_access_info * info) {
+    // Free the heap-allocated array returned by llama_get_tensor_access_count
+    delete[] info;
+}
+
+void llama_reset_tensor_access_count(struct llama_context * ctx) {
+    if (ctx) {
+        ctx->perf_reset();
+    }
 }
 
 //

@@ -65,7 +65,8 @@ std::unique_ptr<llm_graph_context> llama_model_grovemoe::build_arch_graph(const 
 }
 
 llama_model_grovemoe::graph::graph(const llama_model & model, const llm_graph_params & params) :
-    llm_graph_context(params) {
+        llm_graph_context(params) {
+    set_model(&model);
     const int64_t n_embd_head    = hparams.n_embd_head_v();
     const int64_t n_chunk_expert = n_expert / hparams.n_group_experts;
 

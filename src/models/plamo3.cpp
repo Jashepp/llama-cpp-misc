@@ -70,6 +70,7 @@ std::unique_ptr<llm_graph_context> llama_model_plamo3::build_arch_graph(const ll
 template <bool iswa>
 llama_model_plamo3::graph<iswa>::graph(const llama_model & model, const llm_graph_params & params) :
     llm_graph_context(params) {
+    set_model(&model);
     const int64_t head_dim_q = hparams.n_embd_head_k();
     const int64_t head_dim_v = hparams.n_embd_head_v();
 

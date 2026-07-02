@@ -30,8 +30,8 @@ static void launch_snake(ggml_backend_cuda_context & ctx,
                          const ggml_tensor * a,
                          const ggml_tensor * inv_b,
                          ggml_tensor *       dst) {
-    const float * a_d     = (const float *)a->data;
-    const float * inv_b_d = (const float *)inv_b->data;
+    const float * a_d     = (const float *)GGML_CUDA_NAME_TENSOR(a->data, a);
+    const float * inv_b_d = (const float *)GGML_CUDA_NAME_TENSOR(inv_b->data, inv_b);
 
     const int   T = (int)x->ne[0];
     const int   C = (int)x->ne[1];
@@ -46,15 +46,15 @@ static void launch_snake(ggml_backend_cuda_context & ctx,
     switch (x->type) {
         case GGML_TYPE_F32: {
             snake_kernel<<<grid_size, block_size, 0, stream>>>(
-                (const float *)x->data, a_d, inv_b_d, (float *)dst->data, total, T_len_fastdiv);
+                (const float *)GGML_CUDA_NAME_TENSOR(x->data, x), a_d, inv_b_d, (float *)GGML_CUDA_NAME_TENSOR(dst->data, dst), total, T_len_fastdiv);
         } break;
         case GGML_TYPE_F16: {
             snake_kernel<<<grid_size, block_size, 0, stream>>>(
-                (const half *)x->data, a_d, inv_b_d, (half *)dst->data, total, T_len_fastdiv);
+                (const half *)GGML_CUDA_NAME_TENSOR(x->data, x), a_d, inv_b_d, (half *)GGML_CUDA_NAME_TENSOR(dst->data, dst), total, T_len_fastdiv);
         } break;
         case GGML_TYPE_BF16: {
             snake_kernel<<<grid_size, block_size, 0, stream>>>(
-                (const nv_bfloat16 *)x->data, a_d, inv_b_d, (nv_bfloat16 *)dst->data, total, T_len_fastdiv);
+                (const nv_bfloat16 *)GGML_CUDA_NAME_TENSOR(x->data, x), a_d, inv_b_d, (nv_bfloat16 *)GGML_CUDA_NAME_TENSOR(dst->data, dst), total, T_len_fastdiv);
         } break;
         default:
             GGML_ABORT("snake: unsupported type");

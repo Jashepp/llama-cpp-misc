@@ -1225,6 +1225,16 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
 
     this->ml = &ml; // to be used by create_tensor() and load_arch_tensors()
 
+    // Copy tensor_id_map from loader to model for tensor access counting
+    for (const auto & kv : ml.tensor_id_map) {
+        tensor_id_map[kv.first] = kv.second;
+    }
+
+    // Copy data_addr_to_gguf_tensor_map from loader to model for CUDA tensor name resolution
+    for (const auto & kv : ml.data_addr_to_gguf_tensor_map) {
+        data_addr_to_gguf_tensor_map[kv.first] = kv.second;
+    }
+
     LLAMA_LOG_INFO("%s: loading model tensors, this can take a while... (mmap = %s, direct_io = %s)\n",
         __func__, ml.use_mmap ? "true" : "false", ml.use_direct_io ? "true" : "false");
 
@@ -1982,6 +1992,10 @@ const ggml_tensor * llama_model::get_tensor(const char * name) const {
     }
 
     return it->second;
+}
+
+const std::unordered_map<void *, int32_t> & llama_model::get_data_addr_to_gguf_tensor_map() const {
+    return data_addr_to_gguf_tensor_map;
 }
 
 float llama_model::get_rope_freq_base (const llama_cparams & cparams, int il) const {

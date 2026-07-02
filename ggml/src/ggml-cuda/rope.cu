@@ -511,18 +511,17 @@ void ggml_cuda_op_rope_impl(ggml_backend_cuda_context & ctx,
     const ggml_tensor * src1 = dst->src[1];
     const ggml_tensor * src2 = dst->src[2];
 
-    const float * src0_d = (const float *)src0->data;
-    const float * src1_d = (const float *)src1->data;
-
-    void *          dst_d           = dst->data;
+    const float * src0_d = (const float *)GGML_CUDA_NAME_TENSOR(src0->data, src0);
+    const float * src1_d = (const float *)GGML_CUDA_NAME_TENSOR(src1->data, src1);
+    void *          dst_d           = GGML_CUDA_NAME_TENSOR(dst->data, dst);
     const int64_t * row_indices     = nullptr;
     ggml_type       dst_type        = dst->type;
     int             set_rows_stride = 0;
 
     if (set_rows != nullptr) {
         GGML_ASSERT(forward);
-        dst_d           = set_rows->data;
-        row_indices     = (const int64_t *) set_rows->src[1]->data;
+        dst_d           = GGML_CUDA_NAME_TENSOR(set_rows->data, set_rows);
+        row_indices     = (const int64_t *) GGML_CUDA_NAME_TENSOR(set_rows->src[1]->data, set_rows->src[1]);
         dst_type        = set_rows->type;
         set_rows_stride = set_rows->nb[1] / ggml_type_size(set_rows->type);
     }
@@ -587,7 +586,7 @@ void ggml_cuda_op_rope_impl(ggml_backend_cuda_context & ctx,
 
     const float * freq_factors = nullptr;
     if (src2 != nullptr) {
-        freq_factors = (const float *) src2->data;
+        freq_factors = (const float *) GGML_CUDA_NAME_TENSOR(src2->data, src2);
     }
 
     rope_corr_dims corr_dims;

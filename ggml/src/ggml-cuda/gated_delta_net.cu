@@ -251,14 +251,14 @@ void ggml_cuda_op_gated_delta_net(ggml_backend_cuda_context & ctx, ggml_tensor *
 
     const int64_t rq3 = nev3 / neq3;
 
-    const float * q_d = (const float *) src_q->data;
-    const float * k_d = (const float *) src_k->data;
-    const float * v_d = (const float *) src_v->data;
-    const float * g_d = (const float *) src_g->data;
-    const float * b_d = (const float *) src_beta->data;
+    const float * q_d = (const float *) GGML_CUDA_NAME_TENSOR(src_q->data, src_q);
+    const float * k_d = (const float *) GGML_CUDA_NAME_TENSOR(src_k->data, src_k);
+    const float * v_d = (const float *) GGML_CUDA_NAME_TENSOR(src_v->data, src_v);
+    const float * g_d = (const float *) GGML_CUDA_NAME_TENSOR(src_g->data, src_g);
+    const float * b_d = (const float *) GGML_CUDA_NAME_TENSOR(src_beta->data, src_beta);
 
-    const float * s_d   = (const float *) src_state->data;
-    float *       dst_d = (float *) dst->data;
+    const float * s_d   = (const float *) GGML_CUDA_NAME_TENSOR(src_state->data, src_state);
+    float *       dst_d = (float *) GGML_CUDA_NAME_TENSOR(dst->data, dst);
 
     GGML_ASSERT(ggml_is_contiguous_rows(src_q));
     GGML_ASSERT(ggml_is_contiguous_rows(src_k));

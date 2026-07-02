@@ -51,6 +51,7 @@ std::unique_ptr<llm_graph_context> llama_model_dream::build_arch_graph(const llm
 
 llama_model_dream::graph::graph(const llama_model & model, const llm_graph_params & params) :
     llm_graph_context(params) {
+    set_model(&model);
     //copied from qwen2
     const int64_t n_embd_head = hparams.n_embd_head_v();
 

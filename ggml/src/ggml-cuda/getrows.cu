@@ -275,7 +275,7 @@ void ggml_cuda_op_get_rows(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     GGML_ASSERT(src1->nb[0] == ggml_type_size(src1->type));
     GGML_ASSERT(dst->nb[0]  == ggml_type_size(dst->type));
 
-    get_rows_cuda(src0->data, src0->type, (const int32_t *) src1->data, dst->data, dst->type,
+    get_rows_cuda(src0->data, src0->type, (const int32_t *)GGML_CUDA_NAME_TENSOR(src1->data, src1), dst->data, dst->type,
         ne00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb1, nb2, nb3, stream);
 }
 
@@ -285,9 +285,9 @@ void ggml_cuda_op_get_rows_back(ggml_backend_cuda_context & ctx, ggml_tensor * d
 
     GGML_TENSOR_BINARY_OP_LOCALS
 
-    const float   * src0_d = (const float   *) src0->data;
-    const int32_t * src1_d = (const int32_t *) src1->data;
-    float         * dst_d  = (float         *) dst->data;
+    const float   * src0_d = (const float   *)GGML_CUDA_NAME_TENSOR(src0->data, src0);
+    const int32_t * src1_d = (const int32_t *)GGML_CUDA_NAME_TENSOR(src1->data, src1);
+    float         * dst_d  = (float         *)GGML_CUDA_NAME_TENSOR(dst->data, dst);
 
     cudaStream_t stream = ctx.stream();
 

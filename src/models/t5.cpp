@@ -119,7 +119,7 @@ std::unique_ptr<llm_graph_context> llama_model_t5::build_arch_graph(const llm_gr
 }
 
 template <>
-llama_model_t5::graph<false>::graph(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
+llama_model_t5::graph<false>::graph(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) { set_model(&model); 
     const int64_t n_embd_head = hparams.n_embd_head_v();
     //const int64_t n_embd_gqa  = hparams.n_embd_v_gqa();
 
@@ -274,7 +274,7 @@ llama_model_t5::graph<false>::graph(const llama_model & model, const llm_graph_p
 }
 
 template <>
-llama_model_t5::graph<true>::graph(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
+llama_model_t5::graph<true>::graph(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) { set_model(&model); 
     const int64_t n_embd_head = hparams.n_embd_head_v();
 
     GGML_ASSERT(n_embd_head == hparams.n_embd_head_k());
