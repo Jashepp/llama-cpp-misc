@@ -94,7 +94,7 @@ struct common_log_entry {
         }
 
         if (level != GGML_LOG_LEVEL_NONE && level != GGML_LOG_LEVEL_CONT && prefix) {
-            if (timestamp) {
+            if (timestamp && false) {
                 // [M.s.ms.us]
                 fprintf(fcur, "%s%d.%02d.%03d.%03d%s ",
                         g_col[COMMON_LOG_COL_BLUE],
@@ -106,10 +106,10 @@ struct common_log_entry {
             }
 
             switch (level) {
-                case GGML_LOG_LEVEL_INFO:  fprintf(fcur, "%sI %s", g_col[COMMON_LOG_COL_GREEN],   g_col[COMMON_LOG_COL_DEFAULT]); break;
-                case GGML_LOG_LEVEL_WARN:  fprintf(fcur, "%sW %s", g_col[COMMON_LOG_COL_MAGENTA], ""                        ); break;
-                case GGML_LOG_LEVEL_ERROR: fprintf(fcur, "%sE %s", g_col[COMMON_LOG_COL_RED],     ""                        ); break;
-                case GGML_LOG_LEVEL_DEBUG: fprintf(fcur, "%sD %s", g_col[COMMON_LOG_COL_YELLOW],  ""                        ); break;
+                case GGML_LOG_LEVEL_INFO:  fprintf(fcur, "%sI%s ", g_col[COMMON_LOG_COL_GREEN],   g_col[COMMON_LOG_COL_DEFAULT]); break;
+                case GGML_LOG_LEVEL_WARN:  fprintf(fcur, "%sW%s ", g_col[COMMON_LOG_COL_YELLOW],  ""                        ); break;
+                case GGML_LOG_LEVEL_ERROR: fprintf(fcur, "%sE%s ", g_col[COMMON_LOG_COL_RED],     ""                        ); break;
+                case GGML_LOG_LEVEL_DEBUG: fprintf(fcur, "%sD%s ", g_col[COMMON_LOG_COL_MAGENTA], ""                        ); break;
                 default:
                     break;
             }
